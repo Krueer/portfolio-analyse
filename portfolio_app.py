@@ -1153,23 +1153,73 @@ tx = pre_process_corporate_actions(tx)
 
 cash_data = load_cash_values_hybrid(spreadsheet_name)
 
-input_tagesgeld = float(cash_data.get("tagesgeld", 0.0))
-input_girokonto = float(cash_data.get("girokonto", 0.0))
+# ---------------------------------------------------------------------------
+# SIDEBAR RENDERING: WERTE ABFRAGEN (OHNE AUTOMATISCHES SPEICHERN BEIM TIPPEN)
+# ---------------------------------------------------------------------------
+
+with st.sidebar:
+    st.markdown("---")
+    st.header("3. Weitere Konten")
+    st.caption("Trage Cash-Bestände, Gold, Silber und Verbindlichkeiten ein.")
+    
+    input_tagesgeld = st.number_input("Tagesgeld (€)", value=float(cash_data.get("tagesgeld", 0.0)), step=100.0, format="%.2f")
+    input_girokonto = st.number_input("Girokonto (€)", value=float(cash_data.get("girokonto", 0.0)), step=100.0, format="%.2f")
+    input_andere_assets = st.number_input("Andere Assets (Immobilien, geschätzt) (€)", value=float(cash_data.get("andere_assets", 0.0)), step=1000.0, format="%.2f")
+    input_darlehen = st.number_input("Offenes Darlehen / Kredite (€)", value=float(cash_data.get("darlehen", 0.0)), step=1000.0, format="%.2f")
+    
+    st.markdown("**Gold-Bestand**")
+    input_gold_unit = st.selectbox("Einheit (Gold)", ["Unzen (oz)", "Gramm (g)"], index=0 if cash_data.get("gold_unit") == "Unzen (oz)" else 1, key="gold_unit_sel")
+    input_gold_amount = st.number_input("Gold-Menge", value=float(cash_data.get("gold_amount", 0.0)), step=0.1, format="%.4f", key="gold_amt_sel")
+    input_gold_cost = st.number_input("Gold-Kaufpreis gesamt (€)", value=float(cash_data.get("gold_cost", 0.0)), step=100.0, format="%.2f", key="gold_cost_sel")
+    input_gold_date = st.date_input("Gold-Kaufdatum", value=pd.to_datetime(cash_data.get("gold_date", "2021-01-01")), key="gold_date_sel")
+    
+    st.markdown("**Silber-Bestand**")
+    input_silver_unit = st.selectbox("Einheit (Silber)", ["Unzen (oz)", "Gramm (g)"], index=0 if cash_data.get("silver_unit") == "Unzen (oz)" else 1, key="silver_unit_sel")
+    input_silver_amount = st.number_input("Silber-Menge", value=float(cash_data.get("silver_amount", 0.0)), step=1.0, format="%.4f", key="silver_amt_sel")
+    input_silver_cost = st.number_input("Silber-Kaufpreis gesamt (€)", value=float(cash_data.get("silver_cost", 0.0)), step=100.0, format="%.2f", key="silver_cost_sel")
+    input_silver_date = st.date_input("Silber-Kaufdatum", value=pd.to_datetime(cash_data.get("silver_date", "2021-01-01")), key="silver_date_sel")
+    
+    gold_date_str_input = input_gold_date.strftime("%Y-%m-%d")
+    silver_date_str_input = input_silver_date.strftime("%Y-%m-%d")
+    
+    st.caption("💡 Hinweis: Offene Kredite bitte als *positive* Zahl eintragen. Sie werden im Gesamtvermögen automatisch abgezogen.")
+    
+    # Der Speichern-Button: Schreibt die Werte nur bei Klick in das Sheets-Dokument
+    # Das verhindert jegliche Endlosschleifen und schont Ihre API-Quota
+    if st.button("💾 Änderungen speichern", use_container_width=True):
+        save_cash_values_hybrid(
+            spreadsheet_name,
+            input_tagesgeld,
+            input_girokonto,
+            input_darlehen,
+            input_andere_assets,
+            input_gold_unit,
+            input_gold_amount,
+            input_gold_cost,
+            gold_date_str_input,
+            input_silver_unit,
+            input_silver_amount,
+            input_silver_cost,
+            silver_date_str_input
+        )
+        st.success("Werte erfolgreich gespeichert!")
+        st.rerun()
+
+# ---------------------------------------------------------------------------
+# WEITERE BERECHNUNGSWERTE ABLEITEN
+# ---------------------------------------------------------------------------
+
 total_cash = input_tagesgeld + input_girokonto
-total_other_assets = float(cash_data.get("andere_assets", 0.0))
-total_loans = float(cash_data.get("darlehen", 0.0))
+total_other_assets = input_andere_assets
+total_loans = input_darlehen
 
-gold_unit = cash_data.get("gold_unit", "Unzen (oz)")
-gold_amount = float(cash_data.get("gold_amount", 0.0))
-gold_ounces = gold_amount / OZ_TO_G if gold_unit == "Gramm (g)" else gold_amount
-gold_cost = float(cash_data.get("gold_cost", 0.0))
-gold_date_str = cash_data.get("gold_date", "2021-01-01")
+gold_ounces = input_gold_amount / OZ_TO_G if input_gold_unit == "Gramm (g)" else input_gold_amount
+gold_cost = input_gold_cost
+gold_date_str = gold_date_str_input
 
-silver_unit = cash_data.get("silver_unit", "Unzen (oz)")
-silver_amount = float(cash_data.get("silver_amount", 0.0))
-silver_ounces = silver_amount / OZ_TO_G if silver_unit == "Gramm (g)" else silver_amount
-silver_cost = float(cash_data.get("silver_cost", 0.0))
-silver_date_str = cash_data.get("silver_date", "2021-01-01")
+silver_ounces = input_silver_amount / OZ_TO_G if input_silver_unit == "Gramm (g)" else input_silver_amount
+silver_cost = input_silver_cost
+silver_date_str = silver_date_str_input
 
 # Virtual Transactions für Gold, Silber, Cash, Andere Assets & Kredite in tx einbetten
 tx = tx.copy()
@@ -1253,27 +1303,10 @@ total_dividends = tx[tx["type"] == "DIVIDEND"]["amount"].sum() if not tx.empty e
 with st.sidebar:
     st.header("1. Portfolio-Daten")
     
-    scanned_files_count = len(list(BROKER_CSV_DIR.glob("*.csv")))
-    st.caption(f"📁 Auto-Scan-Ordner: `{BROKER_CSV_DIR.name}`")
-    st.caption(f"Gefundene CSV-Dateien: **{scanned_files_count}**")
-    
-    uploaded_file = st.file_uploader("CSV manuell hinzufügen (optional)", type=["csv"])
-    
-    if uploaded_file is not None:
-        file_bytes = uploaded_file.getvalue()
-        
-        if is_duplicate_file(file_bytes):
-            st.sidebar.warning("Diese CSV-Datei existiert bereits im Ordner.")
-        else:
-            target_path = BROKER_CSV_DIR / uploaded_file.name
-            if target_path.exists():
-                target_path = BROKER_CSV_DIR / f"{uploaded_file.name.replace('.csv', '')}_{int(time.time())}.csv"
-            try:
-                target_path.write_bytes(file_bytes)
-                st.sidebar.success(f"Datei erfolgreich im Ordner gespeichert: {target_path.name}")
-                st.rerun()
-            except Exception as e:
-                st.sidebar.error(f"Fehler beim Speichern der Datei: {e}")
+    # Ein Upload-Trigger für neue Broker-CSVs
+    # Die hochgeladenen Dateien werden verarbeitet und das Google Sheet wird neu aufgebaut
+    if scanned_files_count > 0:
+        st.info(f"Es wurden {scanned_files_count} Broker-Dateien hochgeladen und verarbeitet.")
                 
     if st.button("🗑️ Gespeicherte Historie löschen"):
         if is_using_gsheets():
@@ -1282,21 +1315,7 @@ with st.sidebar:
             if STORE_PATH.exists():
                 STORE_PATH.unlink()
             load_store_hybrid.clear()
-        for f in BROKER_CSV_DIR.glob("*.csv"):
-            f.unlink()
         st.rerun()
-
-if tx.empty:
-    st.info(
-        f"👈 Lege deine Broker-Exporte als CSV-Dateien in den Ordner `{BROKER_CSV_DIR.name}` "
-        "oder lade sie manuell über die Sidebar hoch, um zu starten."
-    )
-    st.stop()
-
-ignored_tx_ids, inbound_to_outbound = identify_portfolio_transfers(tx)
-num_transfers = len([k for k, v in inbound_to_outbound.items() if v != "unmatched" and not str(k).startswith("virtual_")])
-if num_transfers > 0:
-    st.info(f"ℹ️ {num_transfers} Broker-Depotübertragungen wurden automatisch erkannt, abgeglichen und konsolidiert. Kaufwerte werden brokerübergreifend fortgeführt.")
 
 # --- Ticker-Zuordnung (mit automatischem Online-Finder!) ---
 all_isins = sorted(tx["ISIN"].unique())
@@ -1334,64 +1353,6 @@ with st.sidebar:
 
     if ticker_map != ticker_overrides:
         save_ticker_overrides(mapping=ticker_map)
-
-# --- Manuelle Cash-Bestände & Weitere Konten ---
-with st.sidebar:
-    st.markdown("---")
-    st.header("3. Weitere Konten")
-    st.caption("Trage Cash-Bestände, Gold, Silber und Verbindlichkeiten ein.")
-    
-    input_tagesgeld = st.number_input("Tagesgeld (€)", value=float(cash_data.get("tagesgeld", 0.0)), step=100.0, format="%.2f")
-    input_girokonto = st.number_input("Girokonto (€)", value=float(cash_data.get("girokonto", 0.0)), step=100.0, format="%.2f")
-    input_andere_assets = st.number_input("Andere Assets (Immobilien, geschätzt) (€)", value=float(cash_data.get("andere_assets", 0.0)), step=1000.0, format="%.2f")
-    input_darlehen = st.number_input("Offenes Darlehen / Kredite (€)", value=float(cash_data.get("darlehen", 0.0)), step=1000.0, format="%.2f")
-    
-    st.markdown("**Gold-Bestand**")
-    input_gold_unit = st.selectbox("Einheit (Gold)", ["Unzen (oz)", "Gramm (g)"], index=0 if cash_data.get("gold_unit") == "Unzen (oz)" else 1, key="gold_unit_sel")
-    input_gold_amount = st.number_input("Gold-Menge", value=float(cash_data.get("gold_amount", 0.0)), step=0.1, format="%.4f", key="gold_amt_sel")
-    input_gold_cost = st.number_input("Gold-Kaufpreis gesamt (€)", value=float(cash_data.get("gold_cost", 0.0)), step=100.0, format="%.2f", key="gold_cost_sel")
-    input_gold_date = st.date_input("Gold-Kaufdatum", value=pd.to_datetime(cash_data.get("gold_date", "2021-01-01")), key="gold_date_sel")
-    
-    st.markdown("**Silber-Bestand**")
-    input_silver_unit = st.selectbox("Einheit (Silber)", ["Unzen (oz)", "Gramm (g)"], index=0 if cash_data.get("silver_unit") == "Unzen (oz)" else 1, key="silver_unit_sel")
-    input_silver_amount = st.number_input("Silber-Menge", value=float(cash_data.get("silver_amount", 0.0)), step=1.0, format="%.4f", key="silver_amt_sel")
-    input_silver_cost = st.number_input("Silber-Kaufpreis gesamt (€)", value=float(cash_data.get("silver_cost", 0.0)), step=100.0, format="%.2f", key="silver_cost_sel")
-    input_silver_date = st.date_input("Silber-Kaufdatum", value=pd.to_datetime(cash_data.get("silver_date", "2021-01-01")), key="silver_date_sel")
-    
-    st.caption("💡 Hinweis: Offene Kredite bitte als *positive* Zahl eintragen. Sie werden im Gesamtvermögen automatisch abgezogen.")
-    
-    gold_date_str_input = input_gold_date.strftime("%Y-%m-%d")
-    silver_date_str_input = input_silver_date.strftime("%Y-%m-%d")
-    
-    if (input_tagesgeld != cash_data.get("tagesgeld") or 
-        input_girokonto != cash_data.get("girokonto") or 
-        input_andere_assets != cash_data.get("andere_assets") or 
-        input_darlehen != cash_data.get("darlehen") or
-        input_gold_unit != cash_data.get("gold_unit") or
-        input_gold_amount != cash_data.get("gold_amount") or
-        input_gold_cost != cash_data.get("gold_cost") or
-        gold_date_str_input != cash_data.get("gold_date") or
-        input_silver_unit != cash_data.get("silver_unit") or
-        input_silver_amount != cash_data.get("silver_amount") or
-        input_silver_cost != cash_data.get("silver_cost") or
-        silver_date_str_input != cash_data.get("silver_date")):
-        
-        save_cash_values_hybrid(
-            spreadsheet_name,
-            input_tagesgeld,
-            input_girokonto,
-            input_darlehen,
-            input_andere_assets,
-            input_gold_unit,
-            input_gold_amount,
-            input_gold_cost,
-            gold_date_str_input,
-            input_silver_unit,
-            input_silver_amount,
-            input_silver_cost,
-            silver_date_str_input
-        )
-        st.rerun()
 
 # ---------------------------------------------------------------------------
 # POSITIONSVERARBEITUNG & LIVE-KURSE
@@ -1436,7 +1397,7 @@ open_df.loc[open_df["ISIN"] == "Physisches Cash", "invested"] = total_cash
 open_df.loc[open_df["ISIN"] == "Physisches Cash", "avg_cost"] = 1.0
 
 open_df.loc[open_df["ISIN"] == "Andere Assets", "invested"] = total_other_assets
-open_df.loc[open_df["ISIN"] == "Andere Assets", "avg_cost"] = 1.0
+open_df.loc[open_df["Andere Assets", "avg_cost"] = 1.0
 
 open_df.loc[open_df["ISIN"] == "Offene Kredite", "invested"] = -total_loans
 open_df.loc[open_df["ISIN"] == "Offene Kredite", "avg_cost"] = 1.0
