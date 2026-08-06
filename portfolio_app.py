@@ -2164,7 +2164,3 @@ else:
         width="stretch",
         hide_index=True,
     )
-
-Gebe mir nur den Code den ich ersetzen muss damit die doppelte Reihe und der MAX gesamt fehler behoben sind (Die doppelte reihe ist der obere block den du anscheinend fälschlicher weise reingemacht hast. Der untere Block soll mit dem reparierten MAX Gesamt existieren)
-
-Ausserdem soll die Tabelle "Positionsübersicht" automatisch absteigend nach G/V (%) sortiert sein. Aktuell ist sie nach investiert sortiert.
