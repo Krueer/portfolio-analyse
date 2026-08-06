@@ -1226,6 +1226,9 @@ tx = pre_process_corporate_actions(tx)
 if num_scanned > 0:
     st.sidebar.info(f"ℹ️ {num_scanned} neue Transaktionen wurden erfolgreich importiert!")
 
+# NEU: Die Definition direkt nach dem Laden von 'tx' platzieren
+ignored_tx_ids, inbound_to_outbound = identify_portfolio_transfers(tx)
+
 cash_data = load_cash_values_hybrid(spreadsheet_name)
 
 # ---------------------------------------------------------------------------
