@@ -972,7 +972,6 @@ def save_store_hybrid(spreadsheet_name: str, df: pd.DataFrame) -> None:
                 df_write = df.copy()
                 df_write["date"] = df_write["date"].astype(str)
                 worksheet.update([df_write.columns.values.tolist()] + df_write.values.tolist())
-                # Löscht den Lese-Cache, damit die neuen Daten sofort angezeigt werden
                 load_store_hybrid.clear()
             except Exception as e:
                 st.error(f"Fehler beim Speichern in Google Sheets: {e}")
@@ -1054,7 +1053,6 @@ def save_cash_values_hybrid(spreadsheet_name: str, tagesgeld: float, girokonto: 
                 worksheet.clear()
                 df = pd.DataFrame([data])
                 worksheet.update([df.columns.values.tolist()] + df.values.tolist())
-                # Löscht den Lese-Cache der Kontostände
                 load_cash_values_hybrid.clear()
             except Exception as e:
                 st.error(f"Fehler beim Speichern der Cash-Bestände in Google Sheets: {e}")
@@ -1145,16 +1143,60 @@ else:
     migrate_database()
 
 # ---------------------------------------------------------------------------
+# SIDEBAR 1: PORTFOLIO-DATEN & DATEI-UPLOAD (AM ANFANG DER APP INITIALISIERT)
+# ---------------------------------------------------------------------------
+
+with st.sidebar:
+    st.header("1. Portfolio-Daten")
+    
+    # Zeige Anzahl der gefundenen Dateien im Ordner
+    scanned_files_count = len(list(BROKER_CSV_DIR.glob("*.csv")))
+    st.caption(f"📁 Auto-Scan-Ordner: `{BROKER_CSV_DIR.name}`")
+    st.caption(f"Gefundene CSV-Dateien: **{scanned_files_count}**")
+    
+    uploaded_file = st.file_uploader("CSV manuell hinzufügen (optional)", type=["csv"])
+    
+    if uploaded_file is not None:
+        file_bytes = uploaded_file.getvalue()
+        
+        if is_duplicate_file(file_bytes):
+            st.sidebar.warning("Diese CSV-Datei existiert bereits im Ordner.")
+        else:
+            target_path = BROKER_CSV_DIR / uploaded_file.name
+            if target_path.exists():
+                target_path = BROKER_CSV_DIR / f"{uploaded_file.name.replace('.csv', '')}_{int(time.time())}.csv"
+            try:
+                target_path.write_bytes(file_bytes)
+                st.sidebar.success(f"Datei erfolgreich im Ordner gespeichert: {target_path.name}")
+                st.rerun()
+            except Exception as e:
+                st.sidebar.error(f"Fehler beim Speichern der Datei: {e}")
+                
+    if st.button("🗑️ Gespeicherte Historie löschen"):
+        if is_using_gsheets():
+            save_store_hybrid(spreadsheet_name, pd.DataFrame(columns=CANONICAL_COLUMNS))
+        else:
+            if STORE_PATH.exists():
+                STORE_PATH.unlink()
+            load_store_hybrid.clear()
+        for f in BROKER_CSV_DIR.glob("*.csv"):
+            f.unlink()
+        st.rerun()
+
+# ---------------------------------------------------------------------------
 # HYBRID-DATEN ABFRAGEN
 # ---------------------------------------------------------------------------
 
 tx, num_scanned = process_broker_csv_folder_hybrid(spreadsheet_name)
 tx = pre_process_corporate_actions(tx)
 
+if num_scanned > 0:
+    st.sidebar.info(f"ℹ️ {num_scanned} neue Transaktionen wurden erfolgreich importiert!")
+
 cash_data = load_cash_values_hybrid(spreadsheet_name)
 
 # ---------------------------------------------------------------------------
-# SIDEBAR RENDERING: WERTE ABFRAGEN (OHNE AUTOMATISCHES SPEICHERN BEIM TIPPEN)
+# SIDEBAR 3: WEITERE KONTEN RENDERING (NUR SPEICHERN BEI KLICK)
 # ---------------------------------------------------------------------------
 
 with st.sidebar:
@@ -1184,8 +1226,7 @@ with st.sidebar:
     
     st.caption("💡 Hinweis: Offene Kredite bitte als *positive* Zahl eintragen. Sie werden im Gesamtvermögen automatisch abgezogen.")
     
-    # Der Speichern-Button: Schreibt die Werte nur bei Klick in das Sheets-Dokument
-    # Das verhindert jegliche Endlosschleifen und schont Ihre API-Quota
+    # Der Speichern-Button schont Ihre API-Quota
     if st.button("💾 Änderungen speichern", use_container_width=True):
         save_cash_values_hybrid(
             spreadsheet_name,
@@ -1295,27 +1336,6 @@ if virtual_tx_list:
 
 # Summe aller Dividenden aus den Transaktionen berechnen
 total_dividends = tx[tx["type"] == "DIVIDEND"]["amount"].sum() if not tx.empty else 0.0
-
-# ---------------------------------------------------------------------------
-# UI START
-# ---------------------------------------------------------------------------
-
-with st.sidebar:
-    st.header("1. Portfolio-Daten")
-    
-    # Ein Upload-Trigger für neue Broker-CSVs
-    # Die hochgeladenen Dateien werden verarbeitet und das Google Sheet wird neu aufgebaut
-    if scanned_files_count > 0:
-        st.info(f"Es wurden {scanned_files_count} Broker-Dateien hochgeladen und verarbeitet.")
-                
-    if st.button("🗑️ Gespeicherte Historie löschen"):
-        if is_using_gsheets():
-            save_store_hybrid(spreadsheet_name, pd.DataFrame(columns=CANONICAL_COLUMNS))
-        else:
-            if STORE_PATH.exists():
-                STORE_PATH.unlink()
-            load_store_hybrid.clear()
-        st.rerun()
 
 # --- Ticker-Zuordnung (mit automatischem Online-Finder!) ---
 all_isins = sorted(tx["ISIN"].unique())
