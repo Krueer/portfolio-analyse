@@ -21,6 +21,20 @@ st.set_page_config(page_title="Portfolio-Analyse", page_icon="📊", layout="wid
 # Umrechnungsfaktor Gramm zu Unzen (1 Troy Unze = 31.1034768 Gramm)
 OZ_TO_G = 31.1034768
 
+# Custom-Styling-Funktion (beseitigt die schwere matplotlib-Abhängigkeit in der Cloud!)
+def color_profit_loss(val):
+    try:
+        val = float(val)
+        if pd.isna(val):
+            return ''
+        if val > 0:
+            return 'background-color: rgba(46, 204, 113, 0.15); color: #2ecc71; font-weight: bold;'
+        elif val < 0:
+            return 'background-color: rgba(231, 76, 60, 0.15); color: #e74c3c; font-weight: bold;'
+    except ValueError:
+        pass
+    return ''
+
 # ---------------------------------------------------------------------------
 # AUTO-SHUTDOWN BEI SCHLIESSEN DES BROWSERS (Nur lokal aktiv)
 # ---------------------------------------------------------------------------
@@ -1002,8 +1016,12 @@ def save_store_hybrid(spreadsheet_name: str, df: pd.DataFrame) -> None:
                 sh = client.open(spreadsheet_name)
                 worksheet = sh.worksheet("portfolio_store")
                 worksheet.clear()
+                
+                # NaNs bereinigen (in leere Strings umwandeln), um JSON-Kompatibilität zu sichern
                 df_write = df.copy()
+                df_write = df_write.fillna("")
                 df_write["date"] = df_write["date"].astype(str)
+                
                 worksheet.update([df_write.columns.values.tolist()] + df_write.values.tolist())
                 load_store_hybrid.clear()
             except Exception as e:
@@ -1798,10 +1816,9 @@ st.dataframe(
             "G/V (€)": "{:,.2f}",
             "G/V (%)": "{:.2f}",
         }
-    ).background_gradient(subset=["G/V (%)"], cmap="RdYlGn", vmin=-30, vmax=30),
+    ).map(color_profit_loss, subset=["G/V (%)"]), # Ersetzt background_gradient durch die neue Farbfunktion
     width="stretch",
 )
-
 # ---------------------------------------------------------------------------
 # CHARTS: PIE + VERLAUF UNTEREINANDER
 # ---------------------------------------------------------------------------
