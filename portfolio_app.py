@@ -1397,7 +1397,7 @@ open_df.loc[open_df["ISIN"] == "Physisches Cash", "invested"] = total_cash
 open_df.loc[open_df["ISIN"] == "Physisches Cash", "avg_cost"] = 1.0
 
 open_df.loc[open_df["ISIN"] == "Andere Assets", "invested"] = total_other_assets
-open_df.loc[open_df["Andere Assets", "avg_cost"] = 1.0
+open_df.loc[open_df["ISIN"] == "Andere Assets", "avg_cost"] = 1.0
 
 open_df.loc[open_df["ISIN"] == "Offene Kredite", "invested"] = -total_loans
 open_df.loc[open_df["ISIN"] == "Offene Kredite", "avg_cost"] = 1.0
