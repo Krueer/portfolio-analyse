@@ -1014,12 +1014,12 @@ if is_using_gsheets():
     
     # Eine einfache PIN-Sperre für Basis-Privatsphäre (PINs hier nach Belieben anpassen!)
     if owner_choice == "Linus":
-        if pin != "1234":
+        if pin != "1809":
             st.warning("Bitte gib die korrekte PIN für Linus ein, um die Daten freizuschalten.")
             st.stop()
         spreadsheet_name = "Portfolio_Linus"
     else:
-        if pin != "5678":
+        if pin != "3112":
             st.warning("Bitte gib die korrekte PIN für Janic ein, um die Daten freizuschalten.")
             st.stop()
         spreadsheet_name = "Portfolio_Janic"
