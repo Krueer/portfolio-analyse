@@ -58,8 +58,733 @@ BROKER_CSV_DIR = APP_DIR / "CSVs von Banken und Brokern"
 
 BROKER_CSV_DIR.mkdir(parents=True, exist_ok=True)
 
+# Statische Fallback-Holdings für bekannte ETFs
+ISIN_HOLDINGS_FALLBACK = {
+    "IE00B4L5Y983": [
+        ("Apple Inc.", "AAPL", 0.049),
+        ("Microsoft Corp.", "MSFT", 0.042),
+        ("NVIDIA Corp.", "NVDA", 0.040),
+        ("Amazon.com Inc.", "AMZN", 0.025),
+        ("Meta Platforms Inc.", "META", 0.018),
+        ("Broadcom Inc.", "AVGO", 0.016),
+        ("Alphabet Inc. Class A", "GOOGL", 0.013),
+        ("Alphabet Inc. Class C", "GOOG", 0.011),
+        ("Tesla Inc.", "TSLA", 0.010),
+        ("Berkshire Hathaway Inc. Class B", "BRK-B", 0.009),
+    ],
+    "IE00BKM4GZ66": [
+        ("Taiwan Semiconductor Manufacturing", "TSM", 0.09),
+        ("Tencent Holdings", "0700.HK", 0.04),
+        ("Alibaba Group", "9988.HK", 0.025),
+        ("Samsung Electronics", "005930.KS", 0.024),
+        ("HDFC Bank", "HDB", 0.014),
+        ("Reliance Industries", "RELIANCE.NS", 0.013),
+        ("ICICI Bank", "IBN", 0.011),
+        ("Meituan", "3690.HK", 0.008),
+        ("Infosys", "INFY", 0.008),
+        ("PDD Holdings", "PDD", 0.007),
+    ],
+    "IE0003XJA0J9": [
+        ("Apple Inc.", "AAPL", 0.038),
+        ("Microsoft Corp.", "MSFT", 0.034),
+        ("NVIDIA Corp.", "NVDA", 0.032),
+        ("Amazon.com Inc.", "AMZN", 0.020),
+        ("Meta Platforms Inc.", "META", 0.014),
+        ("Broadcom Inc.", "AVGO", 0.013),
+        ("Alphabet Inc. Class A", "GOOGL", 0.011),
+        ("Tesla Inc.", "TSLA", 0.008),
+        ("Alphabet Inc. Class C", "GOOG", 0.008),
+        ("Taiwan Semiconductor Manufacturing", "TSM", 0.007),
+    ],
+}
+
+CACHE_TTL_PRICE = 60 * 15
+CACHE_TTL_HISTORY = 60 * 60
+CACHE_TTL_HOLDINGS = 60 * 60 * 24
+
+SIMPLE_COLUMNS = {"isin", "name", "anteile", "kaufpreis", "datum"}
+CANONICAL_COLUMNS = ["date", "ISIN", "Name", "type", "asset_class", "shares", "price", "amount", "fee", "tx_id"]
+
 # ---------------------------------------------------------------------------
-# GOOGLE SHEETS / LOKAL DATENBANK-SCHNITTSTELLE (HYBRID)
+# UTILITY: WÄHRUNGSERKENNUNG (USD vs. EUR)
+# ---------------------------------------------------------------------------
+
+def is_usd_ticker(ticker: str) -> bool:
+    t = str(ticker).strip()
+    return "." not in t and not t.endswith("-EUR")
+
+# ---------------------------------------------------------------------------
+# YFINANCE: LIVE- & HISTORISCHE WECHSELKURSE (USD/EUR)
+# ---------------------------------------------------------------------------
+
+@st.cache_data(ttl=CACHE_TTL_PRICE, show_spinner=False)
+def fetch_usd_eur_rate() -> float:
+    try:
+        rate_data = yf.download("USDEUR=X", period="5d", interval="1d", progress=False)
+        if not rate_data.empty:
+            if isinstance(rate_data.columns, pd.MultiIndex):
+                rate_data.columns = rate_data.columns.get_level_values(0)
+            return float(rate_data["Close"].dropna().iloc[-1])
+    except Exception:
+        pass
+    return 0.92
+
+@st.cache_data(ttl=CACHE_TTL_HISTORY, show_spinner=False)
+def fetch_historical_usd_eur_rate(start: str) -> pd.Series:
+    try:
+        rate_data = yf.download("USDEUR=X", start=start, interval="1d", progress=False)
+        if not rate_data.empty:
+            if isinstance(rate_data.columns, pd.MultiIndex):
+                rate_data.columns = rate_data.columns.get_level_values(0)
+            series = rate_data["Close"].dropna()
+            series.index = pd.to_datetime(series.index).tz_localize(None)
+            return series.ffill().bfill()
+    except Exception:
+        pass
+    return pd.Series()
+
+# ---------------------------------------------------------------------------
+# MATH: MATHEMATISCHER XIRR / IZF SOLVER (Rein Python)
+# ---------------------------------------------------------------------------
+
+def xirr(cashflows: list[tuple[pd.Timestamp, float]]) -> float | None:
+    if not cashflows:
+        return None
+    cashflows = [cf for cf in cashflows if cf[1] != 0]
+    if len(cashflows) < 2:
+        return None
+    
+    amounts = [cf[1] for cf in cashflows]
+    if max(amounts) <= 0 or min(amounts) >= 0:
+        return None
+        
+    t0 = min(cf[0] for cf in cashflows)
+    
+    def eq(r):
+        val = 0.0
+        for date, amt in cashflows:
+            years = (date - t0).days / 365.25
+            if 1.0 + r <= 0:
+                val += amt * (1.0 + r) ** years if years >= 0 else 0
+            else:
+                val += amt / ((1.0 + r) ** years)
+        return val
+
+    low, high = -0.999, 10.0
+    f_low = eq(low)
+    f_high = eq(high)
+    
+    if np.sign(f_low) == np.sign(f_high):
+        high = 50.0
+        f_high = eq(high)
+        if np.sign(f_low) == np.sign(f_high):
+            return None
+
+    for _ in range(150):
+        mid = (low + high) / 2.0
+        f_mid = eq(mid)
+        if abs(f_mid) < 1e-4:
+            return mid
+        if np.sign(f_mid) == np.sign(f_low):
+            low = mid
+        else:
+            high = mid
+    return (low + high) / 2.0
+
+# ---------------------------------------------------------------------------
+# MATH: BERECHNUNG DER PERIODEN-PERFORMANCE AUS DER ZEITREIHE
+# ---------------------------------------------------------------------------
+
+def get_period_performance(value_history: pd.DataFrame, target_date: pd.Timestamp) -> tuple[float, float] | None:
+    """Berechnet die absolute und prozentuale Depot-Performance für ein Zieldatum (Cashflow-bereinigt)."""
+    if value_history.empty:
+        return None
+        
+    today_date = value_history.index[-1]
+    today_val = value_history["Portfolio-Wert"].iloc[-1]
+    today_cap = value_history["Eingezahltes Kapital"].iloc[-1]
+    
+    past_dates = value_history.index[value_history.index <= target_date]
+    if past_dates.empty:
+        past_date = value_history.index[0]
+    else:
+        past_date = past_dates[-1]
+        
+    if past_date == today_date:
+        return None
+        
+    past_val = value_history.loc[past_date, "Portfolio-Wert"]
+    past_cap = value_history.loc[past_date, "Eingezahltes Kapital"]
+    
+    net_deposits = today_cap - past_cap
+    pl_eur = today_val - net_deposits - past_val
+    
+    denominator = past_val + max(0.0, net_deposits)
+    pl_pct = (pl_eur / denominator * 100) if denominator > 0 else 0.0
+    
+    return pl_eur, pl_pct
+
+# ---------------------------------------------------------------------------
+# UTILITY: NORMALIZE COMPANY NAMES (FÜR KONSOLIDIERTE DETAILANSICHT)
+# ---------------------------------------------------------------------------
+
+def normalize_company_name(name: str) -> str:
+    """Bereinigt Firmennamen von Suffixen (AG, Inc, Corp, etc.), um sie zu gruppieren."""
+    n = str(name).strip().lower()
+    for suffix in [" ag", " inc", " corp", " co", " vz", " vzo", " vz.", " a/s", " class b", " (b)", " ag vzo"]:
+        if n.endswith(suffix):
+            n = n[:-len(suffix)].strip()
+    n = n.replace("&", "und").replace("  ", " ").strip()
+    return n.title()
+
+# ---------------------------------------------------------------------------
+# DETEKTION & NORMALISIERUNG (UNTERSTÜTZT TR + SCALABLE)
+# ---------------------------------------------------------------------------
+
+def detect_format(df: pd.DataFrame) -> str:
+    cols = {c.strip().lower() for c in df.columns}
+    if SIMPLE_COLUMNS.issubset(cols):
+        return "simple"
+    if {"category", "type", "symbol", "shares", "amount"}.issubset(cols):
+        return "transactions"  
+    if {"status", "reference", "description", "assettype", "isin", "shares"}.issubset(cols):
+        return "scalable"      
+    raise ValueError("CSV-Format nicht erkannt.")
+
+def normalize_transactions(df: pd.DataFrame, fmt: str) -> pd.DataFrame:
+    df = df.rename(columns={c: c.strip().lower() for c in df.columns})
+
+    if fmt == "simple":
+        df["datum"] = pd.to_datetime(df["datum"])
+        out = pd.DataFrame(
+            {
+                "date": df["datum"],
+                "ISIN": df["isin"].astype(str),
+                "Name": df["name"],
+                "type": "BUY",
+                "asset_class": "",
+                "shares": pd.to_numeric(df["anteile"]),
+                "price": pd.to_numeric(df["kaufpreis"]),
+            }
+        )
+        out["amount"] = -(out["shares"] * out["price"])
+        out["fee"] = 0.0
+        out["tx_id"] = (
+            "simple_"
+            + out["ISIN"] + "_"
+            + out["date"].dt.strftime("%Y%m%d") + "_"
+            + out["shares"].round(6).astype(str) + "_"
+            + out["price"].round(6).astype(str)
+        )
+        return out[CANONICAL_COLUMNS]
+
+    if fmt == "scalable":
+        df["date"] = pd.to_datetime(df["date"])
+        
+        mask = (df["status"] == "Executed") & (
+            (df["assettype"] == "Security") | (df["type"] == "Distribution")
+        )
+        trades = df[mask & (df["isin"].notna() | (df["type"] == "Distribution"))].copy()
+        
+        if trades.empty:
+            raise ValueError("Keine relevanten ausgeführten Transaktionen in der Scalable-CSV gefunden.")
+            
+        def parse_eu_num(val):
+            if pd.isna(val):
+                return 0.0
+            val_str = str(val).strip()
+            if not val_str:
+                return 0.0
+            if "," in val_str:
+                val_str = val_str.replace(".", "").replace(",", ".")
+            try:
+                return float(val_str)
+            except ValueError:
+                return 0.0
+
+        trades["shares"] = trades["shares"].apply(parse_eu_num)
+        trades["price"] = trades["price"].apply(parse_eu_num)
+        trades["amount"] = trades["amount"].apply(parse_eu_num)
+        trades["fee"] = trades["fee"].apply(parse_eu_num)
+        trades["tax"] = trades["tax"].apply(parse_eu_num)
+
+        def map_scal_type(row):
+            t = str(row["type"]).strip().lower()
+            if t in ["buy", "savings plan"]:
+                return "BUY"
+            elif t == "sell":
+                return "SELL"
+            elif t == "security transfer":
+                return "TRANSFER"
+            elif t == "corporate action":
+                return "CORP_ACTION"
+            elif t == "distribution":
+                return "DIVIDEND"  
+            return "UNKNOWN"
+
+        trades["canonical_type"] = trades.apply(map_scal_type, axis=1)
+        trades = trades[trades["canonical_type"] != "UNKNOWN"].copy()
+
+        def adjust_shares(row):
+            sh = row["shares"]
+            if row["canonical_type"] == "SELL":
+                return -abs(sh)
+            return sh
+            
+        trades["shares"] = trades.apply(adjust_shares, axis=1)
+
+        out = pd.DataFrame(
+            {
+                "date": trades["date"],
+                "ISIN": trades["isin"].astype(str),
+                "Name": trades["description"],
+                "type": trades["canonical_type"],
+                "asset_class": "",
+                "shares": trades["shares"],
+                "price": trades["price"],
+                "amount": trades["amount"],
+                "fee": trades["fee"] + trades["tax"],  
+                "tx_id": "scalable_" + trades["reference"].astype(str)
+            }
+        )
+        return out[CANONICAL_COLUMNS]
+
+    df["date"] = pd.to_datetime(df["date"])
+    mask = (
+        (df["category"] == "TRADING") & 
+        (df["type"].isin(["BUY", "SELL", "REDEEM", "LIQUIDATION", "KNOCK_OUT"]))
+    ) | (
+        (df["category"] == "DELIVERY") & (df["type"] == "FREE_RECEIPT")
+    )
+    
+    trades = df[mask & df["symbol"].notna() & (df["symbol"] != "")].copy()
+    if trades.empty:
+        raise ValueError("Keine relevanten TRADING/DELIVERY-Zeilen in der TR-CSV gefunden.")
+
+    normalized_types = trades["type"].replace({
+        "REDEEM": "SELL",
+        "LIQUIDATION": "SELL",
+        "KNOCK_OUT": "SELL"
+    })
+
+    out = pd.DataFrame(
+        {
+            "date": trades["date"],
+            "ISIN": trades["symbol"].astype(str),
+            "Name": trades["name"],
+            "type": normalized_types,
+            "asset_class": trades.get("asset_class", ""),
+            "shares": pd.to_numeric(trades["shares"]),
+            "price": pd.to_numeric(trades["price"], errors="coerce"),
+            "amount": pd.to_numeric(trades["amount"], errors="coerce").fillna(0.0),
+            "fee": pd.to_numeric(trades.get("fee", 0), errors="coerce").fillna(0.0),
+            "tx_id": trades["transaction_id"].astype(str),
+        }
+    )
+    return out[CANONICAL_COLUMNS]
+
+# ---------------------------------------------------------------------------
+# UTILITY: BROKER ZUORDNUNG FÜR CHART-DETAILS
+# ---------------------------------------------------------------------------
+
+def get_broker_name(tx_id: str) -> str:
+    tx_str = str(tx_id)
+    if tx_str.startswith("scalable_"):
+        return "Scalable Capital"
+    elif tx_str.startswith("simple_"):
+        return "Manuelle Buchung"
+    elif tx_str.startswith("virtual_"):
+        return "Guthaben / Eigenbestand"
+    else:
+        return "Trade Republic"
+
+# ---------------------------------------------------------------------------
+# DEPOTÜBERTRAG-DIAGNOSE (INTELLIGENTER 2-STUFIGER ABGLEICH)
+# ---------------------------------------------------------------------------
+
+def identify_portfolio_transfers(tx: pd.DataFrame) -> tuple[set[str], dict[str, str]]:
+    transfers_to_ignore = set()
+    inbound_to_outbound = {}
+    tx_sorted = tx.sort_values("date")
+    
+    inbounds = tx_sorted[(tx_sorted["type"] == "FREE_RECEIPT") | ((tx_sorted["type"] == "TRANSFER") & (tx_sorted["shares"] > 0))].copy()
+    outbounds = tx_sorted[(tx_sorted["type"] == "TRANSFER") & (tx_sorted["shares"] < 0)].copy()
+    
+    matched_inbounds = set()
+    matched_outbounds = set()
+    
+    for _, out_row in outbounds.iterrows():
+        isin = out_row["ISIN"]
+        qty_out = abs(out_row["shares"])
+        date_out = out_row["date"]
+        out_id = out_row["tx_id"]
+        
+        candidates = inbounds[
+            (inbounds["ISIN"] == isin) & 
+            (~inbounds["tx_id"].isin(matched_inbounds))
+        ]
+        
+        for _, in_row in candidates.iterrows():
+            qty_in = abs(in_row["shares"])
+            date_in = in_row["date"]
+            in_id = in_row["tx_id"]
+            
+            if abs(qty_in - qty_out) < 1e-4:
+                days_diff = abs((date_in - date_out).days)
+                if days_diff <= 45:
+                    matched_inbounds.add(in_id)
+                    matched_outbounds.add(out_id)
+                    transfers_to_ignore.add(in_id)
+                    transfers_to_ignore.add(out_id)
+                    inbound_to_outbound[in_id] = out_id
+                    break
+
+    unmatched_inbounds = inbounds[~inbounds["tx_id"].isin(matched_inbounds)].sort_values("date")
+    for _, row in unmatched_inbounds.iterrows():
+        isin = row["ISIN"]
+        qty_in = row["shares"]
+        date_in = row["date"]
+        tx_id = row["tx_id"]
+        
+        prior_buys = tx_sorted[(tx_sorted["ISIN"] == isin) & (tx_sorted["date"] < date_in) & (tx_sorted["type"] == "BUY")]["shares"].sum()
+        prior_sells = abs(tx_sorted[(tx_sorted["ISIN"] == isin) & (tx_sorted["date"] < date_in) & (tx_sorted["type"] == "SELL")]["shares"].sum())
+        prior_balance = prior_buys - prior_sells
+        
+        if prior_balance >= qty_in * 0.75 and qty_in > 1e-5:
+            transfers_to_ignore.add(tx_id)
+            inbound_to_outbound[tx_id] = "unmatched"
+            
+    return transfers_to_ignore, inbound_to_outbound
+
+# ---------------------------------------------------------------------------
+# MATH: KONSOLIDIERUNG VON AKTIENSPLITS (SAME-DAY SAME-ISIN CORP ACTIONS)
+# ---------------------------------------------------------------------------
+
+def pre_process_corporate_actions(df: pd.DataFrame) -> pd.DataFrame:
+    corp_actions = df[df["type"] == "CORP_ACTION"].copy()
+    if corp_actions.empty:
+        return df
+        
+    df_sorted = df.sort_values("date")
+    transfers_to_ignore = set()
+    all_new_rows = []
+    
+    for (date_val, isin), group in corp_actions.groupby(["date", "ISIN"]):
+        if len(group) > 1:
+            net_shares = group["shares"].sum()
+            
+            first_row = group.iloc[0].copy()
+            first_row["type"] = "SPLIT"
+            first_row["shares"] = net_shares
+            first_row["amount"] = 0.0  
+            first_row["price"] = 0.0
+            first_row["fee"] = 0.0
+            
+            all_new_rows.append(first_row)
+            transfers_to_ignore.update(group["tx_id"].tolist())
+            
+    df_clean = df_sorted[~df_sorted["tx_id"].isin(transfers_to_ignore)].copy()
+    if all_new_rows:
+        df_clean = pd.concat([df_clean, pd.DataFrame(all_new_rows)], ignore_index=True)
+        
+    df_clean["date"] = pd.to_datetime(df_clean["date"])
+    return df_clean.sort_values("date").reset_index(drop=True)
+
+# ---------------------------------------------------------------------------
+# MATH: ONLINE ISIN-TO-TICKER SEARCH (Yahoo Query API)
+# ---------------------------------------------------------------------------
+
+@st.cache_data(ttl=CACHE_TTL_HOLDINGS, show_spinner=False)
+def resolve_isin_to_ticker_online(isin: str) -> str | None:
+    url = 'https://query1.finance.yahoo.com/v1/finance/search'
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.0.0 Safari/537.36',
+    }
+    params = {
+        'q': isin,
+        'quotesCount': 1,
+        'newsCount': 0,
+        'listsCount': 0,
+    }
+    try:
+        resp = requests.get(url=url, headers=headers, params=params, timeout=5)
+        if resp.status_code == 200:
+            data = resp.json()
+            if 'quotes' in data and len(data['quotes']) > 0:
+                return data['quotes'][0]['symbol']
+    except Exception:
+        pass
+    return None
+
+# ---------------------------------------------------------------------------
+# UTILITY: FILE HASH FÜR DUPLIKATSCHUTZ IM ORDNER
+# ---------------------------------------------------------------------------
+
+def calculate_file_hash(content: bytes) -> str:
+    return hashlib.sha256(content).hexdigest()
+
+def is_duplicate_file(uploaded_bytes: bytes) -> bool:
+    if not BROKER_CSV_DIR.exists():
+        return False
+    uploaded_hash = calculate_file_hash(uploaded_bytes)
+    for file_path in BROKER_CSV_DIR.glob("*.csv"):
+        try:
+            existing_hash = calculate_file_hash(file_path.read_bytes())
+            if uploaded_hash == existing_hash:
+                return True
+        except Exception:
+            pass
+    return False
+
+# ---------------------------------------------------------------------------
+# PERSISTENTE DATEN-HILFSFUNKTIONEN & SYSTEM-MIGRATION
+# ---------------------------------------------------------------------------
+
+def migrate_database():
+    if STORE_PATH.exists():
+        try:
+            df = pd.read_csv(STORE_PATH)
+            updated = False
+            
+            transfers = df[df["type"] == "TRANSFER"]
+            if not transfers.empty:
+                grouped = transfers.groupby(["ISIN", "date"])
+                for (isin, date), group in grouped:
+                    if len(group) > 1:
+                        if (group["shares"] > 0).any() and (group["shares"] < 0).any():
+                            df.loc[df["tx_id"].isin(group["tx_id"]), "type"] = "CORP_ACTION"
+                            updated = True
+                            
+            if updated:
+                df.to_csv(STORE_PATH, index=False)
+        except Exception:
+            pass
+
+def load_ticker_overrides(all_isins: list) -> dict:
+    mapping = {}
+    if TICKER_MAP_PATH.exists():
+        try:
+            mapping = json.loads(TICKER_MAP_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            mapping = {}
+            
+    updated = False
+    for isin in all_isins:
+        current_val = mapping.get(isin, "")
+        if mapping.get(isin) == "WPEA.PA" and isin == "IE0003XJA0J9":
+            mapping[isin] = "WEBN.DE"
+            updated = True
+        if mapping.get(isin) in ["NOVC.DE", ""] and isin == "DK0062498333":
+            mapping[isin] = "NOV.DE"
+            updated = True
+        if mapping.get(isin) in ["", None]:
+            if isin in DEFAULT_ISIN_TICKER_MAP:
+                mapping[isin] = DEFAULT_ISIN_TICKER_MAP[isin]
+                updated = True
+            else:
+                resolved_ticker = resolve_isin_to_ticker_online(isin)
+                if resolved_ticker:
+                    mapping[isin] = resolved_ticker
+                    updated = True
+                    
+    if updated:
+        save_ticker_overrides(mapping)
+        
+    return mapping
+
+def save_ticker_overrides(mapping: dict) -> None:
+    try:
+        TICKER_MAP_PATH.write_text(json.dumps(mapping, indent=2, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+
+# ---------------------------------------------------------------------------
+# YFINANCE ROBUSTER MULTI-INDEX PARSER & DOWNLOADERS
+# ---------------------------------------------------------------------------
+
+def extract_close_prices(data: pd.DataFrame, ticker: str) -> pd.Series:
+    if data.empty:
+        return pd.Series()
+    
+    cols = data.columns
+    
+    if not isinstance(cols, pd.MultiIndex):
+        if ticker in cols:
+            return data[ticker]
+        if "Close" in cols:
+            return data["Close"]
+        return pd.Series()
+        
+    if "Close" in cols.levels[0] and ticker in cols.levels[1]:
+        return data.xs(key=("Close", ticker), axis=1)
+    if ("Close", ticker) in cols:
+        return data[("Close", ticker)]
+        
+    if ticker in cols.levels[0] and "Close" in cols.levels[1]:
+        return data.xs(key=(ticker, "Close"), axis=1)
+    if (ticker, "Close") in cols:
+        return data[(ticker, "Close")]
+        
+    flat_cols = list(cols)
+    for col in flat_cols:
+        if len(col) == 2:
+            if col[0] == "Close" and col[1] == ticker:
+                return data[col]
+            if col[0] == ticker and col[1] == "Close":
+                return data[col]
+                
+    if len(cols.levels[1]) == 1 and "Close" in cols.levels[0]:
+        return data["Close"].squeeze()
+        
+    return pd.Series()
+
+@st.cache_data(ttl=CACHE_TTL_PRICE, show_spinner=False)
+def fetch_current_prices(tickers: tuple) -> tuple[dict, str]:
+    prices = {}
+    update_time_str = pd.Timestamp.now().strftime("%d.%m.%Y %H:%M:%S")
+    if not tickers:
+        return prices, update_time_str
+        
+    usd_eur_rate = fetch_usd_eur_rate()
+    
+    try:
+        data = yf.download(list(tickers), period="5d", interval="1d", progress=False)
+    except Exception:
+        data = pd.DataFrame()
+        
+    for ticker in tickers:
+        try:
+            series = pd.Series()
+            if not data.empty:
+                series = extract_close_prices(data, ticker).dropna()
+                
+            if series.empty:
+                single_data = yf.download(ticker, period="5d", interval="1d", progress=False)
+                if not single_data.empty:
+                    series = extract_close_prices(single_data, ticker).dropna()
+                    
+            if not series.empty:
+                price = float(series.iloc[-1])
+                if is_usd_ticker(ticker):
+                    price = price * usd_eur_rate
+                prices[ticker] = price
+            else:
+                prices[ticker] = None
+        except Exception:
+            prices[ticker] = None
+    return prices, update_time_str
+
+@st.cache_data(ttl=CACHE_TTL_HISTORY, show_spinner=False)
+def fetch_price_history(tickers: tuple, start: str) -> pd.DataFrame:
+    if not tickers:
+        return pd.DataFrame()
+    
+    tickers = tuple(t for t in tickers if t)
+    usd_eur_rates = fetch_historical_usd_eur_rate(start)
+    
+    try:
+        data = yf.download(list(tickers), start=start, interval="1d", progress=False)
+    except Exception:
+        data = pd.DataFrame()
+        
+    frames = {}
+    for ticker in tickers:
+        try:
+            series = pd.Series()
+            if not data.empty:
+                series = extract_close_prices(data, ticker)
+                
+            if series.empty or series.isna().all():
+                single_data = yf.download(ticker, start=start, interval="1d", progress=False)
+                if single_data.empty:
+                    single_data = yf.download(ticker, interval="1d", progress=False)
+                if not single_data.empty:
+                    series = extract_close_prices(single_data, ticker)
+                        
+            if not series.empty:
+                frames[ticker] = series
+        except Exception:
+            continue
+                
+    if not frames:
+        return pd.DataFrame()
+        
+    hist = pd.DataFrame(frames)
+    hist.index = pd.to_datetime(hist.index).tz_localize(None)
+    hist = hist.ffill().bfill()
+    
+    if not usd_eur_rates.empty:
+        rates_aligned = usd_eur_rates.reindex(hist.index).ffill().bfill()
+        for ticker in hist.columns:
+            if is_usd_ticker(ticker):
+                hist[ticker] = hist[ticker] * rates_aligned
+                
+    return hist
+
+@st.cache_data(ttl=CACHE_TTL_HISTORY, show_spinner=False)
+def fetch_historical_price(ticker: str, date_str: str):
+    try:
+        target = pd.Timestamp(date_str)
+        start = (target - pd.Timedelta(days=10)).strftime("%Y-%m-%d")
+        end = (target + pd.Timedelta(days=10)).strftime("%Y-%m-%d")
+        hist = yf.download(ticker, start=start, end=end, interval="1d", progress=False)
+        if hist.empty:
+            return None
+            
+        hist.index = pd.to_datetime(hist.index).tz_localize(None)
+        series = extract_close_prices(hist, ticker)
+        if series.empty:
+            return None
+            
+        on_or_before = series.index[series.index <= target]
+        chosen = on_or_before.max() if len(on_or_before) > 0 else series.index.min()
+        close = series.loc[chosen]
+        price = float(close)
+        
+        if is_usd_ticker(ticker):
+            rate_hist = yf.download("USDEUR=X", start=start, end=end, interval="1d", progress=False)
+            if not rate_hist.empty:
+                rate_hist.index = pd.to_datetime(rate_hist.index).tz_localize(None)
+                rate_series = extract_close_prices(rate_hist, "USDEUR=X")
+                if not rate_series.empty:
+                    on_or_before_rate = rate_series.index[rate_series.index <= target]
+                    chosen_rate = on_or_before_rate.max() if len(on_or_before_rate) > 0 else rate_series.index.min()
+                    rate = float(rate_series.loc[chosen_rate])
+                    price = price * rate
+                
+        return price
+    except Exception:
+        return None
+
+# ---------------------------------------------------------------------------
+# ETF / FONDS INTERNE ANTEILE ABRUFEN
+# ---------------------------------------------------------------------------
+
+@st.cache_data(ttl=CACHE_TTL_HOLDINGS, show_spinner=False)
+def fetch_etf_holdings(ticker: str, isin: str):
+    try:
+        t = yf.Ticker(ticker)
+        top = t.funds_data.top_holdings
+        if top is not None and not top.empty:
+            df = top.reset_index()
+            df.columns = ["Symbol", "Name", "Weight"] if len(df.columns) == 3 else df.columns
+            if "Holding Percent" in df.columns:
+                df = df.rename(columns={"Holding Percent": "Weight"})
+            df["Weight"] = pd.to_numeric(df["Weight"], errors="coerce")
+            df = df.dropna(subset=["Weight"])
+            if not df.empty:
+                return df[["Name", "Symbol", "Weight"]], "live (yfinance)"
+    except Exception:
+        pass
+
+    if isin in ISIN_HOLDINGS_FALLBACK:
+        df = pd.DataFrame(ISIN_HOLDINGS_FALLBACK[isin], columns=["Name", "Symbol", "Weight"])
+        return df, "Fallback-Tabelle"
+
+    return pd.DataFrame(columns=["Name", "Symbol", "Weight"]), "keine Daten"
+
+# ---------------------------------------------------------------------------
+# HYBRID DATABASE SCHNITTSTELLEN (LOKAL VS GOOGLE SHEETS)
 # ---------------------------------------------------------------------------
 
 def is_using_gsheets() -> bool:
@@ -232,7 +957,6 @@ def process_broker_csv_folder_hybrid(spreadsheet_name: str) -> tuple[pd.DataFram
         combined_new = pd.concat(all_new_txs, ignore_index=True)
         store_df, total_new = merge_into_store_hybrid(spreadsheet_name, combined_new)
         
-        # Lokale Dateien löschen, um Redundanzen in der Cloud zu vermeiden
         for file_path in csv_files:
             try:
                 file_path.unlink()
@@ -242,275 +966,6 @@ def process_broker_csv_folder_hybrid(spreadsheet_name: str) -> tuple[pd.DataFram
         return store_df, total_new
         
     return store_df, 0
-
-# Ticker-Fallback Definitionen
-DEFAULT_ISIN_TICKER_MAP = {
-    "IE00B4L5Y983": "EUNL.DE",     
-    "IE00BKM4GZ66": "IS3N.DE",     
-    "IE0003XJA0J9": "WEBN.DE",     
-    "DE0007664039": "VOW3.DE",     
-    "NL0000235190": "AIR.DE",      
-    "US5949181045": "MSFT",        
-    "DE000LS1LUS9": "LUS.DE",      
-    "DK0062498333": "NOV.DE",      
-    "US8887871080": "TOST",        
-    "US69608A1088": "PLTR",        
-    "DE0007030009": "RHM.DE",      
-    "US4330001060": "HIMS",        
-    "US3825501014": "GT",          
-    "DE0005439004": "CON.DE",      
-    "US98423F1093": "XMTR",        
-    "US64110L1061": "NFLX",        
-    "FR0010755611": "CL2.PA",      
-    "IE00BYWQWR46": "ESP0.DE",     
-    "US62914V1061": "NIO",         
-    "CNE100000296": "BYDDF",       
-    "US3364331070": "FSLR",        
-    "US88160R1014": "TSLA",        
-    "DE0006599905": "MRK.DE",      
-    "LU1778762911": "SPOT",        
-    "US84615Q1031": "SPCX",        
-    "BTC": "BTC-EUR",              
-}
-
-ISIN_HOLDINGS_FALLBACK = {
-    "IE00B4L5Y983": [
-        ("Apple Inc.", "AAPL", 0.049),
-        ("Microsoft Corp.", "MSFT", 0.042),
-        ("NVIDIA Corp.", "NVDA", 0.040),
-        ("Amazon.com Inc.", "AMZN", 0.025),
-        ("Meta Platforms Inc.", "META", 0.018),
-        ("Broadcom Inc.", "AVGO", 0.016),
-        ("Alphabet Inc. Class A", "GOOGL", 0.013),
-        ("Alphabet Inc. Class C", "GOOG", 0.011),
-        ("Tesla Inc.", "TSLA", 0.010),
-        ("Berkshire Hathaway Inc. Class B", "BRK-B", 0.009),
-    ],
-    "IE00BKM4GZ66": [
-        ("Taiwan Semiconductor Manufacturing", "TSM", 0.09),
-        ("Tencent Holdings", "0700.HK", 0.04),
-        ("Alibaba Group", "9988.HK", 0.025),
-        ("Samsung Electronics", "005930.KS", 0.024),
-        ("HDFC Bank", "HDB", 0.014),
-        ("Reliance Industries", "RELIANCE.NS", 0.013),
-        ("ICICI Bank", "IBN", 0.011),
-        ("Meituan", "3690.HK", 0.008),
-        ("Infosys", "INFY", 0.008),
-        ("PDD Holdings", "PDD", 0.007),
-    ],
-    "IE0003XJA0J9": [
-        ("Apple Inc.", "AAPL", 0.038),
-        ("Microsoft Corp.", "MSFT", 0.034),
-        ("NVIDIA Corp.", "NVDA", 0.032),
-        ("Amazon.com Inc.", "AMZN", 0.020),
-        ("Meta Platforms Inc.", "META", 0.014),
-        ("Broadcom Inc.", "AVGO", 0.013),
-        ("Alphabet Inc. Class A", "GOOGL", 0.011),
-        ("Tesla Inc.", "TSLA", 0.008),
-        ("Alphabet Inc. Class C", "GOOG", 0.008),
-        ("Taiwan Semiconductor Manufacturing", "TSM", 0.007),
-    ],
-}
-
-CACHE_TTL_PRICE = 60 * 15
-CACHE_TTL_HISTORY = 60 * 60
-CACHE_TTL_HOLDINGS = 60 * 60 * 24
-
-SIMPLE_COLUMNS = {"isin", "name", "anteile", "kaufpreis", "datum"}
-CANONICAL_COLUMNS = ["date", "ISIN", "Name", "type", "asset_class", "shares", "price", "amount", "fee", "tx_id"]
-
-# ---------------------------------------------------------------------------
-# UTILITY & CURRENCY CONVERSIONS
-# ---------------------------------------------------------------------------
-
-def is_usd_ticker(ticker: str) -> bool:
-    t = str(ticker).strip()
-    return "." not in t and not t.endswith("-EUR")
-
-@st.cache_data(ttl=CACHE_TTL_PRICE, show_spinner=False)
-def fetch_usd_eur_rate() -> float:
-    try:
-        rate_data = yf.download("USDEUR=X", period="5d", interval="1d", progress=False)
-        if not rate_data.empty:
-            if isinstance(rate_data.columns, pd.MultiIndex):
-                rate_data.columns = rate_data.columns.get_level_values(0)
-            return float(rate_data["Close"].dropna().iloc[-1])
-    except Exception:
-        pass
-    return 0.92
-
-@st.cache_data(ttl=CACHE_TTL_HISTORY, show_spinner=False)
-def fetch_historical_usd_eur_rate(start: str) -> pd.Series:
-    try:
-        rate_data = yf.download("USDEUR=X", start=start, interval="1d", progress=False)
-        if not rate_data.empty:
-            if isinstance(rate_data.columns, pd.MultiIndex):
-                rate_data.columns = rate_data.columns.get_level_values(0)
-            series = rate_data["Close"].dropna()
-            series.index = pd.to_datetime(series.index).tz_localize(None)
-            return series.ffill().bfill()
-    except Exception:
-        pass
-    return pd.Series()
-
-# ---------------------------------------------------------------------------
-# YFINANCE ROBUSTER MULTI-INDEX PARSER
-# ---------------------------------------------------------------------------
-
-def extract_close_prices(data: pd.DataFrame, ticker: str) -> pd.Series:
-    """Extrahiert die Close-Preise unabhängig von der installierten yfinance MultiIndex-Spaltenstruktur."""
-    if data.empty:
-        return pd.Series()
-    
-    cols = data.columns
-    
-    if not isinstance(cols, pd.MultiIndex):
-        if ticker in cols:
-            return data[ticker]
-        if "Close" in cols:
-            return data["Close"]
-        return pd.Series()
-        
-    if "Close" in cols.levels[0] and ticker in cols.levels[1]:
-        return data.xs(key=("Close", ticker), axis=1)
-    if ("Close", ticker) in cols:
-        return data[("Close", ticker)]
-        
-    if ticker in cols.levels[0] and "Close" in cols.levels[1]:
-        return data.xs(key=(ticker, "Close"), axis=1)
-    if (ticker, "Close") in cols:
-        return data[(ticker, "Close")]
-        
-    flat_cols = list(cols)
-    for col in flat_cols:
-        if len(col) == 2:
-            if col[0] == "Close" and col[1] == ticker:
-                return data[col]
-            if col[0] == ticker and col[1] == "Close":
-                return data[col]
-                
-    if len(cols.levels[1]) == 1 and "Close" in cols.levels[0]:
-        return data["Close"].squeeze()
-        
-    return pd.Series()
-
-@st.cache_data(ttl=CACHE_TTL_PRICE, show_spinner=False)
-def fetch_current_prices(tickers: tuple) -> tuple[dict, str]:
-    prices = {}
-    update_time_str = pd.Timestamp.now().strftime("%d.%m.%Y %H:%M:%S")
-    if not tickers:
-        return prices, update_time_str
-        
-    usd_eur_rate = fetch_usd_eur_rate()
-    
-    try:
-        data = yf.download(list(tickers), period="5d", interval="1d", progress=False)
-    except Exception:
-        data = pd.DataFrame()
-        
-    for ticker in tickers:
-        try:
-            series = pd.Series()
-            if not data.empty:
-                series = extract_close_prices(data, ticker).dropna()
-                
-            if series.empty:
-                single_data = yf.download(ticker, period="5d", interval="1d", progress=False)
-                if not single_data.empty:
-                    series = extract_close_prices(single_data, ticker).dropna()
-                    
-            if not series.empty:
-                price = float(series.iloc[-1])
-                if is_usd_ticker(ticker):
-                    price = price * usd_eur_rate
-                prices[ticker] = price
-            else:
-                prices[ticker] = None
-        except Exception:
-            prices[ticker] = None
-    return prices, update_time_str
-
-@st.cache_data(ttl=CACHE_TTL_HISTORY, show_spinner=False)
-def fetch_price_history(tickers: tuple, start: str) -> pd.DataFrame:
-    if not tickers:
-        return pd.DataFrame()
-    
-    tickers = tuple(t for t in tickers if t)
-    usd_eur_rates = fetch_historical_usd_eur_rate(start)
-    
-    try:
-        data = yf.download(list(tickers), start=start, interval="1d", progress=False)
-    except Exception:
-        data = pd.DataFrame()
-        
-    frames = {}
-    for ticker in tickers:
-        try:
-            series = pd.Series()
-            if not data.empty:
-                series = extract_close_prices(data, ticker)
-                
-            if series.empty or series.isna().all():
-                single_data = yf.download(ticker, start=start, interval="1d", progress=False)
-                if single_data.empty:
-                    single_data = yf.download(ticker, interval="1d", progress=False)
-                if not single_data.empty:
-                    series = extract_close_prices(single_data, ticker)
-                        
-            if not series.empty:
-                frames[ticker] = series
-        except Exception:
-            continue
-                
-    if not frames:
-        return pd.DataFrame()
-        
-    hist = pd.DataFrame(frames)
-    hist.index = pd.to_datetime(hist.index).tz_localize(None)
-    hist = hist.ffill().bfill()
-    
-    if not usd_eur_rates.empty:
-        rates_aligned = usd_eur_rates.reindex(hist.index).ffill().bfill()
-        for ticker in hist.columns:
-            if is_usd_ticker(ticker):
-                hist[ticker] = hist[ticker] * rates_aligned
-                
-    return hist
-
-@st.cache_data(ttl=CACHE_TTL_HISTORY, show_spinner=False)
-def fetch_historical_price(ticker: str, date_str: str):
-    try:
-        target = pd.Timestamp(date_str)
-        start = (target - pd.Timedelta(days=10)).strftime("%Y-%m-%d")
-        end = (target + pd.Timedelta(days=10)).strftime("%Y-%m-%d")
-        hist = yf.download(ticker, start=start, end=end, interval="1d", progress=False)
-        if hist.empty:
-            return None
-            
-        hist.index = pd.to_datetime(hist.index).tz_localize(None)
-        series = extract_close_prices(hist, ticker)
-        if series.empty:
-            return None
-            
-        on_or_before = series.index[series.index <= target]
-        chosen = on_or_before.max() if len(on_or_before) > 0 else series.index.min()
-        close = series.loc[chosen]
-        price = float(close)
-        
-        if is_usd_ticker(ticker):
-            rate_hist = yf.download("USDEUR=X", start=start, end=end, interval="1d", progress=False)
-            if not rate_hist.empty:
-                rate_hist.index = pd.to_datetime(rate_hist.index).tz_localize(None)
-                rate_series = extract_close_prices(rate_hist, "USDEUR=X")
-                if not rate_series.empty:
-                    on_or_before_rate = rate_series.index[rate_series.index <= target]
-                    chosen_rate = on_or_before_rate.max() if len(on_or_before_rate) > 0 else rate_series.index.min()
-                    rate = float(rate_series.loc[chosen_rate])
-                    price = price * rate
-                
-        return price
-    except Exception:
-        return None
 
 # ---------------------------------------------------------------------------
 # PORTFOLIO- & BENUTZERWAHL (STEUERUNG DER GOOGLE SHEET AUSWAHL)
