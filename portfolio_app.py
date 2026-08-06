@@ -1392,6 +1392,18 @@ if total_loans > 0:
 if virtual_tx_list:
     tx = pd.concat([tx, pd.DataFrame(virtual_tx_list)], ignore_index=True)
 
+# NEU: Wenn tx immer noch komplett leer ist, stoppe die App sauber 
+# und zeige ein Willkommens-Fenster zur Anleitung
+if tx.empty:
+    st.info(
+        "👋 **Willkommen in deiner neuen Portfolio-Analyse!**\n\n"
+        "Dein Online-Speicher ist aktuell noch komplett leer. Um zu starten, führe einfach einen der folgenden Schritte aus:\n\n"
+        "1. **Broker-Daten importieren:** Lade deine ersten Broker-Exporte (CSV von Scalable oder Trade Republic) links in der Sidebar unter **1. Portfolio-Daten** hoch.\n"
+        "2. **Kontostand eintragen:** Trage dein erstes Tagesgeld oder Guthaben links in der Sidebar unter **3. Weitere Konten** ein und klicke auf **Änderungen speichern**.\n\n"
+        "Sobald du Daten eingetragen hast, baut sich dein Cockpit vollautomatisch auf!"
+    )
+    st.stop()
+
 # Summe aller Dividenden aus den Transaktionen berechnen
 total_dividends = tx[tx["type"] == "DIVIDEND"]["amount"].sum() if not tx.empty else 0.0
 
