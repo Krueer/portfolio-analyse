@@ -2146,7 +2146,7 @@ else:
                 "Realisierter G/V (€)": "{:,.2f}",
                 "Realisierter G/V (%)": "{:.2f}",
             }
-        ).background_gradient(subset=["Realisierter G/V (%)"], cmap="RdYlGn", vmin=-30, vmax=30),
+        ).map(color_profit_loss, subset=["Realisierter G/V (%)"]), # Farbfunktion statt background_gradient
         width="stretch",
         hide_index=True,
     )
