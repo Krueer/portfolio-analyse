@@ -784,6 +784,145 @@ def fetch_etf_holdings(ticker: str, isin: str):
     return pd.DataFrame(columns=["Name", "Symbol", "Weight"]), "keine Daten"
 
 # ---------------------------------------------------------------------------
+# PORTFOLIO-LOGIK
+# ---------------------------------------------------------------------------
+
+def build_positions(tx: pd.DataFrame, ticker_map: dict):
+    ignored_tx_ids, _ = identify_portfolio_transfers(tx)
+    active_tx = tx[~tx["tx_id"].isin(ignored_tx_ids)].copy()
+
+    active_tx = active_tx.sort_values("date")
+    open_rows, closed_rows, unresolved = [], [], []
+
+    for isin, group in active_tx.groupby("ISIN"):
+        name = group["Name"].iloc[-1]
+        asset_class = group["asset_class"].iloc[-1] if "asset_class" in group.columns else ""
+        shares = 0.0
+        invested = 0.0
+        realized_pl = 0.0
+        total_invested_ever = 0.0
+        total_proceeds_ever = 0.0
+        first_date = group["date"].min()
+        last_date = group["date"].max()
+
+        for _, row in group.iterrows():
+            if row["type"] == "BUY":
+                cost = abs(row["amount"]) + abs(row["fee"] or 0)
+                shares += row["shares"]
+                invested += cost
+                total_invested_ever += cost
+
+            elif row["type"] == "SELL":
+                sold_qty = abs(row["shares"])
+                proceeds = abs(row["amount"])
+                fee_abs = abs(row["fee"] or 0)
+                avg_cost = (invested / shares) if shares > 1e-9 else 0.0
+                actual_sold = min(sold_qty, shares) if shares > 0 else sold_qty
+                cost_removed = avg_cost * actual_sold
+                invested -= cost_removed
+                realized_pl += proceeds - fee_abs - cost_removed
+                total_proceeds_ever += proceeds
+                shares += row["shares"]
+
+            elif row["type"] == "SPLIT":
+                shares += row["shares"]
+
+            elif row["type"] in ["FREE_RECEIPT", "TRANSFER", "CORP_ACTION"]:
+                if row["shares"] > 0:
+                    price = row["price"] if pd.notna(row["price"]) and row["price"] > 0 else None
+                    if price is None:
+                        ticker = ticker_map.get(isin)
+                        price = fetch_historical_price(ticker, row["date"].strftime("%Y-%m-%d")) if ticker else None
+                    
+                    if price is not None:
+                        cost = price * row["shares"]
+                        invested += cost
+                        total_invested_ever += cost
+                    else:
+                        unresolved.append((isin, name, row["date"], row["shares"]))
+                    shares += row["shares"]
+                else:
+                    removed_qty = abs(row["shares"])
+                    avg_cost = (invested / shares) if shares > 1e-9 else 0.0
+                    actual_removed = min(removed_qty, shares) if shares > 0 else removed_qty
+                    cost_removed = avg_cost * actual_removed
+                    invested -= cost_removed
+                    shares += row["shares"]
+
+            if abs(shares) < 1e-6:
+                shares = 0.0
+
+        if shares > 1e-6 or shares < -1e-6:
+            open_rows.append(
+                {
+                    "ISIN": isin,
+                    "Name": name,
+                    "asset_class": asset_class,
+                    "shares": shares,
+                    "invested": invested,
+                    "avg_cost": (invested / shares) if abs(shares) > 1e-9 else 0.0,
+                    "first_date": first_date,
+                }
+            )
+        else:
+            realized_pl_pct = (realized_pl / total_invested_ever * 100) if total_invested_ever else 0.0
+            closed_rows.append(
+                {
+                    "ISIN": isin,
+                    "Name": name,
+                    "asset_class": asset_class,
+                    "total_invested": total_invested_ever,
+                    "total_proceeds": total_proceeds_ever,
+                    "realized_pl": realized_pl,
+                    "realized_pl_pct": realized_pl_pct,
+                    "first_date": first_date,
+                    "last_date": last_date,
+                }
+            )
+
+    return pd.DataFrame(open_rows), pd.DataFrame(closed_rows), unresolved
+
+
+def build_portfolio_value_history(tx: pd.DataFrame, price_history: pd.DataFrame, ticker_map: dict) -> pd.DataFrame:
+    if price_history.empty:
+        return pd.DataFrame()
+
+    tx = tx.copy()
+    ignored_tx_ids, _ = identify_portfolio_transfers(tx)
+    tx = tx[~tx["tx_id"].isin(ignored_tx_ids)].copy()
+
+    tx["cash_flow"] = -tx["amount"]
+    tx.loc[tx["type"].isin(["TRANSFER", "FREE_RECEIPT", "CORP_ACTION", "SPLIT"]), "cash_flow"] = 0.0
+
+    all_dates = price_history.index
+    total_value = pd.Series(0.0, index=all_dates)
+    invested_capital = pd.Series(0.0, index=all_dates)
+
+    for isin, group in tx.groupby("ISIN"):
+        if isin in ["Physisches Cash", "Andere Assets", "Offene Kredite"]:
+            continue
+            
+        ticker = ticker_map.get(isin)
+        if not ticker or ticker not in price_history.columns:
+            continue
+
+        daily = group.groupby("date")[["shares", "cash_flow"]].sum().sort_index()
+
+        shares_over_time = daily["shares"].cumsum()
+        shares_over_time = shares_over_time.reindex(all_dates.union(shares_over_time.index)).sort_index()
+        shares_over_time = shares_over_time.ffill().fillna(0).reindex(all_dates).ffill().fillna(0)
+        
+        total_value = total_value.add((shares_over_time * price_history[ticker]).fillna(0), fill_value=0)
+
+        cash_over_time = daily["cash_flow"].cumsum()
+        cash_over_time = cash_over_time.reindex(all_dates.union(cash_over_time.index)).sort_index()
+        cash_over_time = cash_over_time.ffill().fillna(0).reindex(all_dates).ffill().fillna(0)
+        invested_capital = invested_capital.add(cash_over_time, fill_value=0)
+
+    result = pd.DataFrame({"Portfolio-Wert": total_value, "Eingezahltes Kapital": invested_capital})
+    return result[result.index >= tx["date"].min()]
+
+# ---------------------------------------------------------------------------
 # HYBRID DATABASE SCHNITTSTELLEN (LOKAL VS GOOGLE SHEETS)
 # ---------------------------------------------------------------------------
 
