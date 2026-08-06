@@ -929,6 +929,15 @@ def build_portfolio_value_history(tx: pd.DataFrame, price_history: pd.DataFrame,
 def is_using_gsheets() -> bool:
     return "gspread" in st.secrets
 
+def get_gspread_client():
+    try:
+        creds = dict(st.secrets["gspread"])
+        creds["private_key"] = creds["private_key"].replace("\\n", "\n")
+        return gspread.service_account_from_dict(creds)
+    except Exception as e:
+        st.error(f"Fehler bei der Google Sheets Verbindung: {e}")
+        return None
+
 @st.cache_data(show_spinner="Lade Transaktionen aus Google Sheets...", ttl=300)
 def load_store_hybrid(spreadsheet_name: str) -> pd.DataFrame:
     if is_using_gsheets():
@@ -1409,6 +1418,7 @@ live_silver_price = current_prices.get("SI=F", 0.0) if "SI=F" in current_prices 
 total_silver_value = silver_ounces * live_silver_price
 
 open_df = open_df.copy()
+# Typ auf 'object' erzwingen, um Pandas dtype Assignment-Fehler bei leeren Werten zu verhindern
 open_df["Ticker"] = open_df["ISIN"].map(ticker_map).astype(object)
 
 open_df.loc[open_df["ISIN"] == "Physisches Gold", "Ticker"] = "GC=F"
@@ -1725,14 +1735,14 @@ st.markdown(
             </tr>
             <tr style="border-bottom: 2px solid rgba(255, 255, 255, 0.2); height: 50px;">
                 <td>
-                    <strong style="font-size: 15px;">Gesamtvermögen</strong> 
+                    <strong>Gesamtvermögen</strong> 
                     <span style="cursor: help; margin-left: 5px;" title="Dein aggregierter Vermögenswert aus dem Depotwert, den Cash-Beständen, Gold und Sachwerten abzüglich der Kredite.">ℹ️</span>
                 </td>
                 <td style="text-align: right; font-weight: bold; font-size: 16px;">{net_worth:,.2f} €</td>
             </tr>
             <tr style="height: 50px;">
                 <td>
-                    <strong style="font-size: 15px;">Performance p.a. (IZF / XIRR)</strong> 
+                    <strong>Performance p.a. (IZF / XIRR)</strong> 
                     <span style="cursor: help; margin-left: 5px;" title="Die annualisierte zeitgewichtete Rendite unter Berücksichtigung aller Zu- und Abflüsse sowie dem heutigen Depotwert (bezogen auf investierte Vermögenswerte).">ℹ️</span>
                 </td>
                 <td style="text-align: right; font-size: 15px;">{izf_str}</td>
