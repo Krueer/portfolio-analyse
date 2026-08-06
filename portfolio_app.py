@@ -1550,22 +1550,41 @@ with st.spinner("Lade Kurshistorie..."):
 value_history = build_portfolio_value_history(tx, price_history, ticker_map)
 
 if not value_history.empty:
-    if "GC=F" in price_history.columns:
-        gold_start_dt = pd.to_datetime(gold_date_str)
-        gold_mask = value_history.index >= gold_start_dt
-        if gold_mask.any():
-            value_history.loc[gold_mask, "Portfolio-Wert"] += gold_ounces * price_history.loc[gold_mask, "GC=F"]
-            value_history.loc[gold_mask, "Eingezahltes Kapital"] += gold_cost
-            
-    if "SI=F" in price_history.columns:
-        silver_start_dt = pd.to_datetime(silver_date_str)
-        silver_mask = value_history.index >= silver_start_dt
-        if silver_mask.any():
-            value_history.loc[silver_mask, "Portfolio-Wert"] += silver_ounces * price_history.loc[silver_mask, "SI=F"]
-            value_history.loc[silver_mask, "Eingezahltes Kapital"] += silver_cost
-
-    value_history["Portfolio-Wert"] += total_cash + total_other_assets - total_loans
-    value_history["Eingezahltes Kapital"] += total_cash + total_other_assets - total_loans
+    today_date = value_history.index[-1]
+    periods = {
+        "Heute (1T)": today_date - pd.Timedelta(days=1),
+        "1 Woche (7T)": today_date - pd.Timedelta(days=7),
+        "1 Monat (30T)": today_date - pd.Timedelta(days=30),
+        "YTD (Jahr)": pd.Timestamp(year=today_date.year - 1, month=12, day=31),
+        "1 Jahr (365T)": today_date - pd.Timedelta(days=365),
+        "MAX (Gesamt)": None  # Kennzeichnen wir für die Sonderbehandlung
+    }
+    
+    p_cols = st.columns(6)
+    for i, (label, target_dt) in enumerate(periods.items()):
+        with p_cols[i]:
+            if label == "MAX (Gesamt)":
+                # Hier weisen wir exakt die reale, korrekte Performance aus der Tabelle aus
+                sign = "+" if total_return_abs >= 0 else ""
+                st.metric(
+                    label=label,
+                    value=f"{total_return_abs:,.2f} €",
+                    delta=f"{sign}{total_return_pct:.2f}%"
+                )
+            else:
+                perf = get_period_performance(value_history, target_dt)
+                if perf is not None:
+                    pl_eur, pl_pct = perf
+                    sign = "+" if pl_eur >= 0 else ""
+                    st.metric(
+                        label=label,
+                        value=f"{pl_eur:,.2f} €",
+                        delta=f"{sign}{pl_pct:.2f}%"
+                    )
+                else:
+                    st.metric(label=label, value="-", delta=None)
+else:
+    st.info("Kurshistorie wird geladen, um Performance-Indikatoren anzuzeigen.")
 
 # XIRR / IZF Cashflow-Berechnung
 cash_flows = []
