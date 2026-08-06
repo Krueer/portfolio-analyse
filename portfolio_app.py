@@ -910,7 +910,10 @@ def build_positions(tx: pd.DataFrame, ticker_map: dict):
                 }
             )
 
-    return pd.DataFrame(open_rows), pd.DataFrame(closed_rows), unresolved
+    open_df = pd.DataFrame(open_rows) if open_rows else pd.DataFrame(columns=["ISIN", "Name", "asset_class", "shares", "invested", "avg_cost", "first_date"])
+    closed_df = pd.DataFrame(closed_rows) if closed_rows else pd.DataFrame(columns=["ISIN", "Name", "asset_class", "total_invested", "total_proceeds", "realized_pl", "realized_pl_pct", "first_date", "last_date"])
+
+    return open_df, closed_df, unresolved
 
 
 def build_portfolio_value_history(tx: pd.DataFrame, price_history: pd.DataFrame, ticker_map: dict) -> pd.DataFrame:
@@ -1002,7 +1005,6 @@ def save_store_hybrid(spreadsheet_name: str, df: pd.DataFrame) -> None:
                 df_write = df.copy()
                 df_write["date"] = df_write["date"].astype(str)
                 worksheet.update([df_write.columns.values.tolist()] + df_write.values.tolist())
-                # Löscht den Lese-Cache, damit die neuen Daten sofort angezeigt werden
                 load_store_hybrid.clear()
             except Exception as e:
                 st.error(f"Fehler beim Speichern in Google Sheets: {e}")
@@ -1084,7 +1086,6 @@ def save_cash_values_hybrid(spreadsheet_name: str, tagesgeld: float, girokonto: 
                 worksheet.clear()
                 df = pd.DataFrame([data])
                 worksheet.update([df.columns.values.tolist()] + df.values.tolist())
-                # Löscht den Lese-Cache der Kontostände
                 load_cash_values_hybrid.clear()
             except Exception as e:
                 st.error(f"Fehler beim Speichern der Cash-Bestände in Google Sheets: {e}")
@@ -1430,8 +1431,7 @@ total_gold_value = gold_ounces * live_gold_price
 live_silver_price = current_prices.get("SI=F", 0.0) if "SI=F" in current_prices else 0.0
 total_silver_value = silver_ounces * live_silver_price
 
-open_df = open_df.copy()
-# Typ auf 'object' erzwingen, um Pandas dtype Assignment-Fehler bei leeren Werten zu verhindern
+# Typ der Ticker-Spalte auf Objekt setzen, um Pandas Assignment-Fehler bei leeren DataFrames zu verhindern
 open_df["Ticker"] = open_df["ISIN"].map(ticker_map).astype(object)
 
 open_df.loc[open_df["ISIN"] == "Physisches Gold", "Ticker"] = "GC=F"
