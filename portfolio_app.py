@@ -1409,7 +1409,8 @@ live_silver_price = current_prices.get("SI=F", 0.0) if "SI=F" in current_prices 
 total_silver_value = silver_ounces * live_silver_price
 
 open_df = open_df.copy()
-open_df["Ticker"] = open_df["ISIN"].map(ticker_map)
+# Typ auf 'object' erzwingen, um Pandas dtype Assignment-Fehler bei leeren Werten zu verhindern
+open_df["Ticker"] = open_df["ISIN"].map(ticker_map).astype(object)
 
 open_df.loc[open_df["ISIN"] == "Physisches Gold", "Ticker"] = "GC=F"
 open_df.loc[open_df["ISIN"] == "Physisches Silber", "Ticker"] = "SI=F"
@@ -1715,7 +1716,7 @@ st.markdown(
             </tr>
             <tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.1); height: 45px;">
                 <td>
-                    <strong style="font-size: 15px;">Gesamt-Performance (Depot)</strong> 
+                    <strong>Gesamt-Performance (Depot)</strong> 
                     <span style="cursor: help; margin-left: 5px;" title="Der absolute Gesamtertrag deines Depots (unrealisierte Kursgewinne + realisierte Gewinne + erhaltene Dividenden).">ℹ️</span>
                 </td>
                 <td style="text-align: right;">
@@ -1725,14 +1726,14 @@ st.markdown(
             </tr>
             <tr style="border-bottom: 2px solid rgba(255, 255, 255, 0.2); height: 50px;">
                 <td>
-                    <strong style="font-size: 15px;">Gesamtvermögen</strong> 
+                    <strong>Gesamtvermögen</strong> 
                     <span style="cursor: help; margin-left: 5px;" title="Dein aggregierter Vermögenswert aus dem Depotwert, den Cash-Beständen, Gold und Sachwerten abzüglich der Kredite.">ℹ️</span>
                 </td>
                 <td style="text-align: right; font-weight: bold; font-size: 16px;">{net_worth:,.2f} €</td>
             </tr>
             <tr style="height: 50px;">
                 <td>
-                    <strong style="font-size: 15px;">Performance p.a. (IZF / XIRR)</strong> 
+                    <strong>Performance p.a. (IZF / XIRR)</strong> 
                     <span style="cursor: help; margin-left: 5px;" title="Die annualisierte zeitgewichtete Rendite unter Berücksichtigung aller Zu- und Abflüsse sowie dem heutigen Depotwert (bezogen auf investierte Vermögenswerte).">ℹ️</span>
                 </td>
                 <td style="text-align: right; font-size: 15px;">{izf_str}</td>
