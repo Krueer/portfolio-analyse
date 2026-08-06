@@ -10,16 +10,19 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 import yfinance as yf
-import gspread  # Hinzugefügt für Google-Sheets-Integration
+import gspread
 
 # ---------------------------------------------------------------------------
-# KONFIGURATION & PFADE
+# KONFIGURATION & GLOBALE VARIABLEN
 # ---------------------------------------------------------------------------
 
 st.set_page_config(page_title="Portfolio-Analyse", page_icon="📊", layout="wide")
 
+# Umrechnungsfaktor Gramm zu Unzen (1 Troy Unze = 31.1034768 Gramm)
+OZ_TO_G = 31.1034768
+
 # ---------------------------------------------------------------------------
-# AUTO-SHUTDOWN BEI SCHLIESSEN DES BROWSERS (Nur im lokalen Modus aktiv)
+# AUTO-SHUTDOWN BEI SCHLIESSEN DES BROWSERS (Nur lokal aktiv)
 # ---------------------------------------------------------------------------
 import os
 import signal
@@ -133,7 +136,6 @@ def load_cash_values_hybrid(spreadsheet_name: str) -> dict:
                 records = worksheet.get_all_records()
                 if records:
                     data = records[0]
-                    # Migration alter Datenstrukturen zu Gold-Positionen
                     if "gold_ounces" in data and "gold_amount" not in data:
                         data["gold_amount"] = data["gold_ounces"]
                         data["gold_unit"] = "Unzen (oz)"
@@ -230,7 +232,7 @@ def process_broker_csv_folder_hybrid(spreadsheet_name: str) -> tuple[pd.DataFram
         combined_new = pd.concat(all_new_txs, ignore_index=True)
         store_df, total_new = merge_into_store_hybrid(spreadsheet_name, combined_new)
         
-        # Lösche verarbeitete lokale CSV-Dateien, um doppeltes Scannen bei Neustarts der Cloud zu verhindern
+        # Lokale Dateien löschen, um Redundanzen in der Cloud zu vermeiden
         for file_path in csv_files:
             try:
                 file_path.unlink()
@@ -241,37 +243,36 @@ def process_broker_csv_folder_hybrid(spreadsheet_name: str) -> tuple[pd.DataFram
         
     return store_df, 0
 
-# ISIN -> Yahoo-Finance-Ticker Mapping
+# Ticker-Fallback Definitionen
 DEFAULT_ISIN_TICKER_MAP = {
-    "IE00B4L5Y983": "EUNL.DE",     # iShares Core MSCI World UCITS ETF (Acc)
-    "IE00BKM4GZ66": "IS3N.DE",     # iShares Core MSCI EM IMI UCITS ETF (Acc)
-    "IE0003XJA0J9": "WEBN.DE",     # Amundi Prime All Country World UCITS ETF (Acc)
-    "DE0007664039": "VOW3.DE",     # Volkswagen (Vz.)
-    "NL0000235190": "AIR.DE",      # Airbus
-    "US5949181045": "MSFT",        # Microsoft
-    "DE000LS1LUS9": "LUS.DE",      # Lang & Schwarz
-    "DK0062498333": "NOV.DE",      # Novo-Nordisk (B)
-    "US8887871080": "TOST",        # Toast
-    "US69608A1088": "PLTR",        # Palantir Technologies
-    "DE0007030009": "RHM.DE",      # Rheinmetall
-    "US4330001060": "HIMS",        # Hims & Hers Health
-    "US3825501014": "GT",          # Goodyear Tire & Rubber
-    "DE0005439004": "CON.DE",      # Continental
-    "US98423F1093": "XMTR",        # Xometry
-    "US64110L1061": "NFLX",        # Netflix
-    "FR0010755611": "CL2.PA",      # MSCI USA 2x Lev
-    "IE00BYWQWR46": "ESP0.DE",     # VanEck Video Gaming
-    "US62914V1061": "NIO",         # NIO
-    "CNE100000296": "BYDDF",       # BYD
-    "US3364331070": "FSLR",        # First Solar
-    "US88160R1014": "TSLA",        # Tesla
-    "DE0006599905": "MRK.DE",      # Merck
-    "LU1778762911": "SPOT",        # Spotify
-    "US84615Q1031": "SPCX",        # SpaceX
-    "BTC": "BTC-EUR",              # Bitcoin
+    "IE00B4L5Y983": "EUNL.DE",     
+    "IE00BKM4GZ66": "IS3N.DE",     
+    "IE0003XJA0J9": "WEBN.DE",     
+    "DE0007664039": "VOW3.DE",     
+    "NL0000235190": "AIR.DE",      
+    "US5949181045": "MSFT",        
+    "DE000LS1LUS9": "LUS.DE",      
+    "DK0062498333": "NOV.DE",      
+    "US8887871080": "TOST",        
+    "US69608A1088": "PLTR",        
+    "DE0007030009": "RHM.DE",      
+    "US4330001060": "HIMS",        
+    "US3825501014": "GT",          
+    "DE0005439004": "CON.DE",      
+    "US98423F1093": "XMTR",        
+    "US64110L1061": "NFLX",        
+    "FR0010755611": "CL2.PA",      
+    "IE00BYWQWR46": "ESP0.DE",     
+    "US62914V1061": "NIO",         
+    "CNE100000296": "BYDDF",       
+    "US3364331070": "FSLR",        
+    "US88160R1014": "TSLA",        
+    "DE0006599905": "MRK.DE",      
+    "LU1778762911": "SPOT",        
+    "US84615Q1031": "SPCX",        
+    "BTC": "BTC-EUR",              
 }
 
-# Statische Fallback-Holdings für bekannte ETFs
 ISIN_HOLDINGS_FALLBACK = {
     "IE00B4L5Y983": [
         ("Apple Inc.", "AAPL", 0.049),
@@ -318,19 +319,13 @@ CACHE_TTL_HOLDINGS = 60 * 60 * 24
 SIMPLE_COLUMNS = {"isin", "name", "anteile", "kaufpreis", "datum"}
 CANONICAL_COLUMNS = ["date", "ISIN", "Name", "type", "asset_class", "shares", "price", "amount", "fee", "tx_id"]
 
-
 # ---------------------------------------------------------------------------
-# UTILITY: WÄHRUNGSERKENNUNG (USD vs. EUR)
+# UTILITY & CURRENCY CONVERSIONS
 # ---------------------------------------------------------------------------
 
 def is_usd_ticker(ticker: str) -> bool:
     t = str(ticker).strip()
     return "." not in t and not t.endswith("-EUR")
-
-
-# ---------------------------------------------------------------------------
-# YFINANCE: LIVE- & HISTORISCHE WECHSELKURSE (USD/EUR)
-# ---------------------------------------------------------------------------
 
 @st.cache_data(ttl=CACHE_TTL_PRICE, show_spinner=False)
 def fetch_usd_eur_rate() -> float:
@@ -343,7 +338,6 @@ def fetch_usd_eur_rate() -> float:
     except Exception:
         pass
     return 0.92
-
 
 @st.cache_data(ttl=CACHE_TTL_HISTORY, show_spinner=False)
 def fetch_historical_usd_eur_rate(start: str) -> pd.Series:
@@ -359,648 +353,171 @@ def fetch_historical_usd_eur_rate(start: str) -> pd.Series:
         pass
     return pd.Series()
 
-
 # ---------------------------------------------------------------------------
-# MATH: MATHEMATISCHER XIRR / IZF SOLVER (Rein Python)
+# YFINANCE ROBUSTER MULTI-INDEX PARSER
 # ---------------------------------------------------------------------------
 
-def xirr(cashflows: list[tuple[pd.Timestamp, float]]) -> float | None:
-    if not cashflows:
-        return None
-    cashflows = [cf for cf in cashflows if cf[1] != 0]
-    if len(cashflows) < 2:
-        return None
+def extract_close_prices(data: pd.DataFrame, ticker: str) -> pd.Series:
+    """Extrahiert die Close-Preise unabhängig von der installierten yfinance MultiIndex-Spaltenstruktur."""
+    if data.empty:
+        return pd.Series()
     
-    amounts = [cf[1] for cf in cashflows]
-    if max(amounts) <= 0 or min(amounts) >= 0:
-        return None
-        
-    t0 = min(cf[0] for cf in cashflows)
+    cols = data.columns
     
-    def eq(r):
-        val = 0.0
-        for date, amt in cashflows:
-            years = (date - t0).days / 365.25
-            if 1.0 + r <= 0:
-                val += amt * (1.0 + r) ** years if years >= 0 else 0
-            else:
-                val += amt / ((1.0 + r) ** years)
-        return val
+    if not isinstance(cols, pd.MultiIndex):
+        if ticker in cols:
+            return data[ticker]
+        if "Close" in cols:
+            return data["Close"]
+        return pd.Series()
+        
+    if "Close" in cols.levels[0] and ticker in cols.levels[1]:
+        return data.xs(key=("Close", ticker), axis=1)
+    if ("Close", ticker) in cols:
+        return data[("Close", ticker)]
+        
+    if ticker in cols.levels[0] and "Close" in cols.levels[1]:
+        return data.xs(key=(ticker, "Close"), axis=1)
+    if (ticker, "Close") in cols:
+        return data[(ticker, "Close")]
+        
+    flat_cols = list(cols)
+    for col in flat_cols:
+        if len(col) == 2:
+            if col[0] == "Close" and col[1] == ticker:
+                return data[col]
+            if col[0] == ticker and col[1] == "Close":
+                return data[col]
+                
+    if len(cols.levels[1]) == 1 and "Close" in cols.levels[0]:
+        return data["Close"].squeeze()
+        
+    return pd.Series()
 
-    low, high = -0.999, 10.0
-    f_low = eq(low)
-    f_high = eq(high)
+@st.cache_data(ttl=CACHE_TTL_PRICE, show_spinner=False)
+def fetch_current_prices(tickers: tuple) -> tuple[dict, str]:
+    prices = {}
+    update_time_str = pd.Timestamp.now().strftime("%d.%m.%Y %H:%M:%S")
+    if not tickers:
+        return prices, update_time_str
+        
+    usd_eur_rate = fetch_usd_eur_rate()
     
-    if np.sign(f_low) == np.sign(f_high):
-        high = 50.0
-        f_high = eq(high)
-        if np.sign(f_low) == np.sign(f_high):
-            return None
-
-    for _ in range(150):
-        mid = (low + high) / 2.0
-        f_mid = eq(mid)
-        if abs(f_mid) < 1e-4:
-            return mid
-        if np.sign(f_mid) == np.sign(f_low):
-            low = mid
-        else:
-            high = mid
-    return (low + high) / 2.0
-
-
-# ---------------------------------------------------------------------------
-# MATH: BERECHNUNG DER PERIODEN-PERFORMANCE AUS DER ZEITREIHE
-# ---------------------------------------------------------------------------
-
-def get_period_performance(value_history: pd.DataFrame, target_date: pd.Timestamp) -> tuple[float, float] | None:
-    """Berechnet die absolute und prozentuale Depot-Performance für ein Zieldatum (Cashflow-bereinigt)."""
-    if value_history.empty:
-        return None
-        
-    today_date = value_history.index[-1]
-    today_val = value_history["Portfolio-Wert"].iloc[-1]
-    today_cap = value_history["Eingezahltes Kapital"].iloc[-1]
-    
-    # Finde nahesten historischen Tag am/vor dem Zieldatum
-    past_dates = value_history.index[value_history.index <= target_date]
-    if past_dates.empty:
-        past_date = value_history.index[0]
-    else:
-        past_date = past_dates[-1]
-        
-    if past_date == today_date:
-        return None
-        
-    past_val = value_history.loc[past_date, "Portfolio-Wert"]
-    past_cap = value_history.loc[past_date, "Eingezahltes Kapital"]
-    
-    # Netto-Einzahlungen im Zeitraum abziehen, um Performance nicht zu verfälschen
-    net_deposits = today_cap - past_cap
-    pl_eur = today_val - net_deposits - past_val
-    
-    # Referenzbasis für prozentuale Rendite bestimmen
-    denominator = past_val + max(0.0, net_deposits)
-    pl_pct = (pl_eur / denominator * 100) if denominator > 0 else 0.0
-    
-    return pl_eur, pl_pct
-
-
-# ---------------------------------------------------------------------------
-# UTILITY: NORMALIZE COMPANY NAMES (FÜR KONSOLIDIERTE DETAILANSICHT)
-# ---------------------------------------------------------------------------
-
-def normalize_company_name(name: str) -> str:
-    """Bereinigt Firmennamen von Suffixen (AG, Inc, Corp, etc.), um sie zu gruppieren."""
-    n = str(name).strip().lower()
-    for suffix in [" ag", " inc", " corp", " co", " vz", " vzo", " vz.", " a/s", " class b", " (b)", " ag vzo"]:
-        if n.endswith(suffix):
-            n = n[:-len(suffix)].strip()
-    n = n.replace("&", "und").replace("  ", " ").strip()
-    return n.title()
-
-
-# ---------------------------------------------------------------------------
-# DETEKTION & NORMALISIERUNG (UNTERSTÜTZT TR + SCALABLE)
-# ---------------------------------------------------------------------------
-
-def detect_format(df: pd.DataFrame) -> str:
-    cols = {c.strip().lower() for c in df.columns}
-    if SIMPLE_COLUMNS.issubset(cols):
-        return "simple"
-    if {"category", "type", "symbol", "shares", "amount"}.issubset(cols):
-        return "transactions"  # Trade Republic
-    if {"status", "reference", "description", "assettype", "isin", "shares"}.issubset(cols):
-        return "scalable"      # Scalable Capital
-    raise ValueError("CSV-Format nicht erkannt.")
-
-
-def normalize_transactions(df: pd.DataFrame, fmt: str) -> pd.DataFrame:
-    df = df.rename(columns={c: c.strip().lower() for c in df.columns})
-
-    if fmt == "simple":
-        df["datum"] = pd.to_datetime(df["datum"])
-        out = pd.DataFrame(
-            {
-                "date": df["datum"],
-                "ISIN": df["isin"].astype(str),
-                "Name": df["name"],
-                "type": "BUY",
-                "asset_class": "",
-                "shares": pd.to_numeric(df["anteile"]),
-                "price": pd.to_numeric(df["kaufpreis"]),
-            }
-        )
-        out["amount"] = -(out["shares"] * out["price"])
-        out["fee"] = 0.0
-        out["tx_id"] = (
-            "simple_"
-            + out["ISIN"] + "_"
-            + out["date"].dt.strftime("%Y%m%d") + "_"
-            + out["shares"].round(6).astype(str) + "_"
-            + out["price"].round(6).astype(str)
-        )
-        return out[CANONICAL_COLUMNS]
-
-    if fmt == "scalable":
-        df["date"] = pd.to_datetime(df["date"])
-        
-        # Ausschüttungen (Dividenden in assetType 'Cash') und Wertpapiere (Security) erfassen
-        mask = (df["status"] == "Executed") & (
-            (df["assettype"] == "Security") | (df["type"] == "Distribution")
-        )
-        trades = df[mask & (df["isin"].notna() | (df["type"] == "Distribution"))].copy()
-        
-        if trades.empty:
-            raise ValueError("Keine relevanten ausgeführten Transaktionen in der Scalable-CSV gefunden.")
-            
-        # Europäische Zahlenkonvertierung (z.B. -2.254,89 -> -2254.89)
-        def parse_eu_num(val):
-            if pd.isna(val):
-                return 0.0
-            val_str = str(val).strip()
-            if not val_str:
-                return 0.0
-            if "," in val_str:
-                val_str = val_str.replace(".", "").replace(",", ".")
-            try:
-                return float(val_str)
-            except ValueError:
-                return 0.0
-
-        trades["shares"] = trades["shares"].apply(parse_eu_num)
-        trades["price"] = trades["price"].apply(parse_eu_num)
-        trades["amount"] = trades["amount"].apply(parse_eu_num)
-        trades["fee"] = trades["fee"].apply(parse_eu_num)
-        trades["tax"] = trades["tax"].apply(parse_eu_num)
-
-        # Zuordnung auf kanonische Typen
-        def map_scal_type(row):
-            t = str(row["type"]).strip().lower()
-            if t in ["buy", "savings plan"]:
-                return "BUY"
-            elif t == "sell":
-                return "SELL"
-            elif t == "security transfer":
-                return "TRANSFER"
-            elif t == "corporate action":
-                return "CORP_ACTION"
-            elif t == "distribution":
-                return "DIVIDEND"  # Dividenden-Kategorie
-            return "UNKNOWN"
-
-        trades["canonical_type"] = trades.apply(map_scal_type, axis=1)
-        trades = trades[trades["canonical_type"] != "UNKNOWN"].copy()
-
-        def adjust_shares(row):
-            sh = row["shares"]
-            if row["canonical_type"] == "SELL":
-                return -abs(sh)
-            return sh
-            
-        trades["shares"] = trades.apply(adjust_shares, axis=1)
-
-        out = pd.DataFrame(
-            {
-                "date": trades["date"],
-                "ISIN": trades["isin"].astype(str),
-                "Name": trades["description"],
-                "type": trades["canonical_type"],
-                "asset_class": "",
-                "shares": trades["shares"],
-                "price": trades["price"],
-                "amount": trades["amount"],
-                "fee": trades["fee"] + trades["tax"],  # Zusammenfassung von Gebühren & Steuern
-                "tx_id": "scalable_" + trades["reference"].astype(str)
-            }
-        )
-        return out[CANONICAL_COLUMNS]
-
-    # Standard Trade Republic Format
-    df["date"] = pd.to_datetime(df["date"])
-    mask = (
-        (df["category"] == "TRADING") & 
-        (df["type"].isin(["BUY", "SELL", "REDEEM", "LIQUIDATION", "KNOCK_OUT"]))
-    ) | (
-        (df["category"] == "DELIVERY") & (df["type"] == "FREE_RECEIPT")
-    )
-    
-    trades = df[mask & df["symbol"].notna() & (df["symbol"] != "")].copy()
-    if trades.empty:
-        raise ValueError("Keine relevanten TRADING/DELIVERY-Zeilen in der TR-CSV gefunden.")
-
-    normalized_types = trades["type"].replace({
-        "REDEEM": "SELL",
-        "LIQUIDATION": "SELL",
-        "KNOCK_OUT": "SELL"
-    })
-
-    out = pd.DataFrame(
-        {
-            "date": trades["date"],
-            "ISIN": trades["symbol"].astype(str),
-            "Name": trades["name"],
-            "type": normalized_types,
-            "asset_class": trades.get("asset_class", ""),
-            "shares": pd.to_numeric(trades["shares"]),
-            "price": pd.to_numeric(trades["price"], errors="coerce"),
-            "amount": pd.to_numeric(trades["amount"], errors="coerce").fillna(0.0),
-            "fee": pd.to_numeric(trades.get("fee", 0), errors="coerce").fillna(0.0),
-            "tx_id": trades["transaction_id"].astype(str),
-        }
-    )
-    return out[CANONICAL_COLUMNS]
-
-
-# ---------------------------------------------------------------------------
-# UTILITY: BROKER ZUORDNUNG FÜR CHART-DETAILS
-# ---------------------------------------------------------------------------
-
-def get_broker_name(tx_id: str) -> str:
-    tx_str = str(tx_id)
-    if tx_str.startswith("scalable_"):
-        return "Scalable Capital"
-    elif tx_str.startswith("simple_"):
-        return "Manuelle Buchung"
-    elif tx_str.startswith("virtual_"):
-        return "Guthaben / Eigenbestand"
-    else:
-        return "Trade Republic"
-
-
-# ---------------------------------------------------------------------------
-# DEPOTÜBERTRAG-DIAGNOSE (INTELLIGENTER 2-STUFIGER ABGLEICH)
-# ---------------------------------------------------------------------------
-
-def identify_portfolio_transfers(tx: pd.DataFrame) -> tuple[set[str], dict[str, str]]:
-    """Identifiziert Depotübertragungen (Broker-Wechsel).
-
-    - Stufe 1: Direkte Paare aus Aus- und Einbuchung (+/- Anteile) im gleichen Zeitfenster.
-    - Stufe 2: Intelligente Deduplikation von Einbuchungen, wenn die entsprechenden Käufe
-      historisch bereits in der Datenbank existieren (und nur der TR-Ausgangsbeleg fehlt).
-    """
-    transfers_to_ignore = set()
-    inbound_to_outbound = {}
-    tx_sorted = tx.sort_values("date")
-    
-    inbounds = tx_sorted[(tx_sorted["type"] == "FREE_RECEIPT") | ((tx_sorted["type"] == "TRANSFER") & (tx_sorted["shares"] > 0))].copy()
-    outbounds = tx_sorted[(tx_sorted["type"] == "TRANSFER") & (tx_sorted["shares"] < 0)].copy()
-    
-    matched_inbounds = set()
-    matched_outbounds = set()
-    
-    # Stufe 1: Direkte zeitnahe Paare matchen (TR vs. Scalable)
-    for _, out_row in outbounds.iterrows():
-        isin = out_row["ISIN"]
-        qty_out = abs(out_row["shares"])
-        date_out = out_row["date"]
-        out_id = out_row["tx_id"]
-        
-        candidates = inbounds[
-            (inbounds["ISIN"] == isin) & 
-            (~inbounds["tx_id"].isin(matched_inbounds))
-        ]
-        
-        for _, in_row in candidates.iterrows():
-            qty_in = abs(in_row["shares"])
-            date_in = in_row["date"]
-            in_id = in_row["tx_id"]
-            
-            if abs(qty_in - qty_out) < 1e-4:
-                days_diff = abs((date_in - date_out).days)
-                if days_diff <= 45:
-                    matched_inbounds.add(in_id)
-                    matched_outbounds.add(out_id)
-                    transfers_to_ignore.add(in_id)
-                    transfers_to_ignore.add(out_id)
-                    inbound_to_outbound[in_id] = out_id
-                    break
-
-    # Stufe 2: Erkennung von verdoppelten Einbuchungen ohne TR-Ausgangsbeleg (Grenze auf 75% gesenkt)
-    unmatched_inbounds = inbounds[~inbounds["tx_id"].isin(matched_inbounds)].sort_values("date")
-    for _, row in unmatched_inbounds.iterrows():
-        isin = row["ISIN"]
-        qty_in = row["shares"]
-        date_in = row["date"]
-        tx_id = row["tx_id"]
-        
-        prior_buys = tx_sorted[(tx_sorted["ISIN"] == isin) & (tx_sorted["date"] < date_in) & (tx_sorted["type"] == "BUY")]["shares"].sum()
-        prior_sells = abs(tx_sorted[(tx_sorted["ISIN"] == isin) & (tx_sorted["date"] < date_in) & (tx_sorted["type"] == "SELL")]["shares"].sum())
-        prior_balance = prior_buys - prior_sells
-        
-        if prior_balance >= qty_in * 0.75 and qty_in > 1e-5:
-            transfers_to_ignore.add(tx_id)
-            inbound_to_outbound[tx_id] = "unmatched"
-            
-    return transfers_to_ignore, inbound_to_outbound
-
-
-# ---------------------------------------------------------------------------
-# MATH: KONSOLIDIERUNG VON AKTIENSPLITS (SAME-DAY SAME-ISIN CORP ACTIONS)
-# ---------------------------------------------------------------------------
-
-def pre_process_corporate_actions(df: pd.DataFrame) -> pd.DataFrame:
-    """Führt Aktiensplits (Corporate Actions am selben Tag für dieselbe ISIN) zusammen."""
-    corp_actions = df[df["type"] == "CORP_ACTION"].copy()
-    if corp_actions.empty:
-        return df
-        
-    df_sorted = df.sort_values("date")
-    transfers_to_ignore = set()
-    all_new_rows = []
-    
-    # Gruppiere nach Datum und ISIN, um Splits zusammenzuführen
-    for (date_val, isin), group in corp_actions.groupby(["date", "ISIN"]):
-        if len(group) > 1:
-            net_shares = group["shares"].sum()
-            
-            # Neue konsolidierte "SPLIT"-Zeile generieren
-            first_row = group.iloc[0].copy()
-            first_row["type"] = "SPLIT"
-            first_row["shares"] = net_shares
-            first_row["amount"] = 0.0  # Kein Cashflow bei Splits
-            first_row["price"] = 0.0
-            first_row["fee"] = 0.0
-            
-            all_new_rows.append(first_row)
-            transfers_to_ignore.update(group["tx_id"].tolist())
-            
-    # Entferne die alten Split-Einzelzeilen und füge die konsolidierte SPLIT-Zeile hinzu
-    df_clean = df_sorted[~df_sorted["tx_id"].isin(transfers_to_ignore)].copy()
-    if all_new_rows:
-        df_clean = pd.concat([df_clean, pd.DataFrame(all_new_rows)], ignore_index=True)
-        
-    df_clean["date"] = pd.to_datetime(df_clean["date"])
-    return df_clean.sort_values("date").reset_index(drop=True)
-
-
-# ---------------------------------------------------------------------------
-# MATH: ONLINE ISIN-TO-TICKER SEARCH (Yahoo Query API)
-# ---------------------------------------------------------------------------
-
-@st.cache_data(ttl=CACHE_TTL_HOLDINGS, show_spinner=False)
-def resolve_isin_to_ticker_online(isin: str) -> str | None:
-    url = 'https://query1.finance.yahoo.com/v1/finance/search'
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.0.0 Safari/537.36',
-    }
-    params = {
-        'q': isin,
-        'quotesCount': 1,
-        'newsCount': 0,
-        'listsCount': 0,
-    }
     try:
-        resp = requests.get(url=url, headers=headers, params=params, timeout=5)
-        if resp.status_code == 200:
-            data = resp.json()
-            if 'quotes' in data and len(data['quotes']) > 0:
-                return data['quotes'][0]['symbol']
+        data = yf.download(list(tickers), period="5d", interval="1d", progress=False)
     except Exception:
-        pass
-    return None
-
-
-# ---------------------------------------------------------------------------
-# UTILITY: FILE HASH FÜR DUPLIKATSCHUTZ IM ORDNER
-# ---------------------------------------------------------------------------
-
-def calculate_file_hash(content: bytes) -> str:
-    return hashlib.sha256(content).hexdigest()
-
-
-def is_duplicate_file(uploaded_bytes: bytes) -> bool:
-    if not BROKER_CSV_DIR.exists():
-        return False
-    uploaded_hash = calculate_file_hash(uploaded_bytes)
-    for file_path in BROKER_CSV_DIR.glob("*.csv"):
-        try:
-            existing_hash = calculate_file_hash(file_path.read_bytes())
-            if uploaded_hash == existing_hash:
-                return True
-        except Exception:
-            pass
-    return False
-
-
-# ---------------------------------------------------------------------------
-# PERSISTENTE DATEN-HILFSFUNKTIONEN & SYSTEM-MIGRATION
-# ---------------------------------------------------------------------------
-
-def migrate_database():
-    """Datenbank-Migration zur automatischen Reparatur alter Tesla-Split-Einträge."""
-    if STORE_PATH.exists():
-        try:
-            df = pd.read_csv(STORE_PATH)
-            updated = False
-            
-            # Finde TRANSFER-Einträge, die eigentlich CORP_ACTION sein sollten (z.B. Tesla Split)
-            transfers = df[df["type"] == "TRANSFER"]
-            if not transfers.empty:
-                grouped = transfers.groupby(["ISIN", "date"])
-                for (isin, date), group in grouped:
-                    if len(group) > 1:
-                        # Wenn es entgegengesetzte Vorzeichen gibt (z.B. +3 und -1) und die IDs von Scalable stammen
-                        if (group["shares"] > 0).any() and (group["shares"] < 0).any():
-                            df.loc[df["tx_id"].isin(group["tx_id"]), "type"] = "CORP_ACTION"
-                            updated = True
-                            
-            if updated:
-                df.to_csv(STORE_PATH, index=False)
-        except Exception:
-            pass
-
-
-def load_ticker_overrides(all_isins: list) -> dict:
-    mapping = {}
-    if TICKER_MAP_PATH.exists():
-        try:
-            mapping = json.loads(TICKER_MAP_PATH.read_text(encoding="utf-8"))
-        except Exception:
-            mapping = {}
-            
-    updated = False
-    for isin in all_isins:
-        current_val = mapping.get(isin, "")
-        if mapping.get(isin) == "WPEA.PA" and isin == "IE0003XJA0J9":
-            mapping[isin] = "WEBN.DE"
-            updated = True
-        if mapping.get(isin) in ["NOVC.DE", ""] and isin == "DK0062498333":
-            mapping[isin] = "NOV.DE"
-            updated = True
-        if mapping.get(isin) in ["", None]:
-            if isin in DEFAULT_ISIN_TICKER_MAP:
-                mapping[isin] = DEFAULT_ISIN_TICKER_MAP[isin]
-                updated = True
-            else:
-                resolved_ticker = resolve_isin_to_ticker_online(isin)
-                if resolved_ticker:
-                    mapping[isin] = resolved_ticker
-                    updated = True
-                    
-    if updated:
-        save_ticker_overrides(mapping)
+        data = pd.DataFrame()
         
-    return mapping
-
-
-def save_ticker_overrides(mapping: dict) -> None:
-    try:
-        TICKER_MAP_PATH.write_text(json.dumps(mapping, indent=2, ensure_ascii=False), encoding="utf-8")
-    except Exception:
-        pass
-
-
-# ---------------------------------------------------------------------------
-# PORTFOLIO-LOGIK
-# ---------------------------------------------------------------------------
-
-def build_positions(tx: pd.DataFrame, ticker_map: dict):
-    ignored_tx_ids, _ = identify_portfolio_transfers(tx)
-    active_tx = tx[~tx["tx_id"].isin(ignored_tx_ids)].copy()
-
-    active_tx = active_tx.sort_values("date")
-    open_rows, closed_rows, unresolved = [], [], []
-
-    for isin, group in active_tx.groupby("ISIN"):
-        name = group["Name"].iloc[-1]
-        asset_class = group["asset_class"].iloc[-1] if "asset_class" in group.columns else ""
-        shares = 0.0
-        invested = 0.0
-        realized_pl = 0.0
-        total_invested_ever = 0.0
-        total_proceeds_ever = 0.0
-        first_date = group["date"].min()
-        last_date = group["date"].max()
-
-        for _, row in group.iterrows():
-            if row["type"] == "BUY":
-                cost = abs(row["amount"]) + abs(row["fee"] or 0)
-                shares += row["shares"]
-                invested += cost
-                total_invested_ever += cost
-
-            elif row["type"] == "SELL":
-                sold_qty = abs(row["shares"])
-                proceeds = abs(row["amount"])
-                fee_abs = abs(row["fee"] or 0)
-                avg_cost = (invested / shares) if shares > 1e-9 else 0.0
-                actual_sold = min(sold_qty, shares) if shares > 0 else sold_qty
-                cost_removed = avg_cost * actual_sold
-                invested -= cost_removed
-                realized_pl += proceeds - fee_abs - cost_removed
-                total_proceeds_ever += proceeds
-                shares += row["shares"]
-
-            elif row["type"] == "SPLIT":
-                shares += row["shares"]
-
-            elif row["type"] in ["FREE_RECEIPT", "TRANSFER", "CORP_ACTION"]:
-                if row["shares"] > 0:
-                    price = row["price"] if pd.notna(row["price"]) and row["price"] > 0 else None
-                    if price is None:
-                        ticker = ticker_map.get(isin)
-                        price = fetch_historical_price(ticker, row["date"].strftime("%Y-%m-%d")) if ticker else None
+    for ticker in tickers:
+        try:
+            series = pd.Series()
+            if not data.empty:
+                series = extract_close_prices(data, ticker).dropna()
+                
+            if series.empty:
+                single_data = yf.download(ticker, period="5d", interval="1d", progress=False)
+                if not single_data.empty:
+                    series = extract_close_prices(single_data, ticker).dropna()
                     
-                    if price is not None:
-                        cost = price * row["shares"]
-                        invested += cost
-                        total_invested_ever += cost
-                    else:
-                        unresolved.append((isin, name, row["date"], row["shares"]))
-                    shares += row["shares"]
-                else:
-                    removed_qty = abs(row["shares"])
-                    avg_cost = (invested / shares) if shares > 1e-9 else 0.0
-                    actual_removed = min(removed_qty, shares) if shares > 0 else removed_qty
-                    cost_removed = avg_cost * actual_removed
-                    invested -= cost_removed
-                    shares += row["shares"]
+            if not series.empty:
+                price = float(series.iloc[-1])
+                if is_usd_ticker(ticker):
+                    price = price * usd_eur_rate
+                prices[ticker] = price
+            else:
+                prices[ticker] = None
+        except Exception:
+            prices[ticker] = None
+    return prices, update_time_str
 
-            if abs(shares) < 1e-6:
-                shares = 0.0
-
-        if shares > 1e-6 or shares < -1e-6:
-            open_rows.append(
-                {
-                    "ISIN": isin,
-                    "Name": name,
-                    "asset_class": asset_class,
-                    "shares": shares,
-                    "invested": invested,
-                    "avg_cost": (invested / shares) if abs(shares) > 1e-9 else 0.0,
-                    "first_date": first_date,
-                }
-            )
-        else:
-            realized_pl_pct = (realized_pl / total_invested_ever * 100) if total_invested_ever else 0.0
-            closed_rows.append(
-                {
-                    "ISIN": isin,
-                    "Name": name,
-                    "asset_class": asset_class,
-                    "total_invested": total_invested_ever,
-                    "total_proceeds": total_proceeds_ever,
-                    "realized_pl": realized_pl,
-                    "realized_pl_pct": realized_pl_pct,
-                    "first_date": first_date,
-                    "last_date": last_date,
-                }
-            )
-
-    return pd.DataFrame(open_rows), pd.DataFrame(closed_rows), unresolved
-
-
-def build_portfolio_value_history(tx: pd.DataFrame, price_history: pd.DataFrame, ticker_map: dict) -> pd.DataFrame:
-    if price_history.empty:
+@st.cache_data(ttl=CACHE_TTL_HISTORY, show_spinner=False)
+def fetch_price_history(tickers: tuple, start: str) -> pd.DataFrame:
+    if not tickers:
         return pd.DataFrame()
-
-    tx = tx.copy()
-    ignored_tx_ids, _ = identify_portfolio_transfers(tx)
-    tx = tx[~tx["tx_id"].isin(ignored_tx_ids)].copy()
-
-    tx["cash_flow"] = -tx["amount"]
-    tx.loc[tx["type"].isin(["TRANSFER", "FREE_RECEIPT", "CORP_ACTION", "SPLIT"]), "cash_flow"] = 0.0
-
-    all_dates = price_history.index
-    total_value = pd.Series(0.0, index=all_dates)
-    invested_capital = pd.Series(0.0, index=all_dates)
-
-    for isin, group in tx.groupby("ISIN"):
-        if isin in ["Physisches Cash", "Andere Assets", "Offene Kredite"]:
-            continue
-            
-        ticker = ticker_map.get(isin)
-        if not ticker or ticker not in price_history.columns:
-            continue
-
-        daily = group.groupby("date")[["shares", "cash_flow"]].sum().sort_index()
-
-        shares_over_time = daily["shares"].cumsum()
-        shares_over_time = shares_over_time.reindex(all_dates.union(shares_over_time.index)).sort_index()
-        shares_over_time = shares_over_time.ffill().fillna(0).reindex(all_dates).ffill().fillna(0)
+    
+    tickers = tuple(t for t in tickers if t)
+    usd_eur_rates = fetch_historical_usd_eur_rate(start)
+    
+    try:
+        data = yf.download(list(tickers), start=start, interval="1d", progress=False)
+    except Exception:
+        data = pd.DataFrame()
         
-        total_value = total_value.add((shares_over_time * price_history[ticker]).fillna(0), fill_value=0)
+    frames = {}
+    for ticker in tickers:
+        try:
+            series = pd.Series()
+            if not data.empty:
+                series = extract_close_prices(data, ticker)
+                
+            if series.empty or series.isna().all():
+                single_data = yf.download(ticker, start=start, interval="1d", progress=False)
+                if single_data.empty:
+                    single_data = yf.download(ticker, interval="1d", progress=False)
+                if not single_data.empty:
+                    series = extract_close_prices(single_data, ticker)
+                        
+            if not series.empty:
+                frames[ticker] = series
+        except Exception:
+            continue
+                
+    if not frames:
+        return pd.DataFrame()
+        
+    hist = pd.DataFrame(frames)
+    hist.index = pd.to_datetime(hist.index).tz_localize(None)
+    hist = hist.ffill().bfill()
+    
+    if not usd_eur_rates.empty:
+        rates_aligned = usd_eur_rates.reindex(hist.index).ffill().bfill()
+        for ticker in hist.columns:
+            if is_usd_ticker(ticker):
+                hist[ticker] = hist[ticker] * rates_aligned
+                
+    return hist
 
-        cash_over_time = daily["cash_flow"].cumsum()
-        cash_over_time = cash_over_time.reindex(all_dates.union(cash_over_time.index)).sort_index()
-        cash_over_time = cash_over_time.ffill().fillna(0).reindex(all_dates).ffill().fillna(0)
-        invested_capital = invested_capital.add(cash_over_time, fill_value=0)
-
-    result = pd.DataFrame({"Portfolio-Wert": total_value, "Eingezahltes Kapital": invested_capital})
-    return result[result.index >= tx["date"].min()]
-
+@st.cache_data(ttl=CACHE_TTL_HISTORY, show_spinner=False)
+def fetch_historical_price(ticker: str, date_str: str):
+    try:
+        target = pd.Timestamp(date_str)
+        start = (target - pd.Timedelta(days=10)).strftime("%Y-%m-%d")
+        end = (target + pd.Timedelta(days=10)).strftime("%Y-%m-%d")
+        hist = yf.download(ticker, start=start, end=end, interval="1d", progress=False)
+        if hist.empty:
+            return None
+            
+        hist.index = pd.to_datetime(hist.index).tz_localize(None)
+        series = extract_close_prices(hist, ticker)
+        if series.empty:
+            return None
+            
+        on_or_before = series.index[series.index <= target]
+        chosen = on_or_before.max() if len(on_or_before) > 0 else series.index.min()
+        close = series.loc[chosen]
+        price = float(close)
+        
+        if is_usd_ticker(ticker):
+            rate_hist = yf.download("USDEUR=X", start=start, end=end, interval="1d", progress=False)
+            if not rate_hist.empty:
+                rate_hist.index = pd.to_datetime(rate_hist.index).tz_localize(None)
+                rate_series = extract_close_prices(rate_hist, "USDEUR=X")
+                if not rate_series.empty:
+                    on_or_before_rate = rate_series.index[rate_series.index <= target]
+                    chosen_rate = on_or_before_rate.max() if len(on_or_before_rate) > 0 else rate_series.index.min()
+                    rate = float(rate_series.loc[chosen_rate])
+                    price = price * rate
+                
+        return price
+    except Exception:
+        return None
 
 # ---------------------------------------------------------------------------
 # PORTFOLIO- & BENUTZERWAHL (STEUERUNG DER GOOGLE SHEET AUSWAHL)
 # ---------------------------------------------------------------------------
 
-st.title("📊 Portfolio-Analyse")
-
-# Standardmäßig Ihr Portfolio
 spreadsheet_name = "Portfolio_Linus"
 
-# Falls Google Sheets angebunden ist, blenden wir die Auswahl am Seitenkopf ein
 if is_using_gsheets():
     col_sel1, col_sel2 = st.columns([2, 1])
     with col_sel1:
@@ -1012,7 +529,6 @@ if is_using_gsheets():
     with col_sel2:
         pin = st.text_input("PIN zur Freischaltung", type="password", help="Bitte gib die PIN ein, um Zugriff auf das Portfolio zu erhalten.")
     
-    # Eine einfache PIN-Sperre für Basis-Privatsphäre (PINs hier nach Belieben anpassen!)
     if owner_choice == "Linus":
         if pin != "1809":
             st.warning("Bitte gib die korrekte PIN für Linus ein, um die Daten freizuschalten.")
@@ -1024,17 +540,15 @@ if is_using_gsheets():
             st.stop()
         spreadsheet_name = "Portfolio_Janic"
 else:
-    # Lokal verhalten wir uns wie gewohnt
     migrate_database()
 
 # ---------------------------------------------------------------------------
-# HYBRID-DATEN ABFRAGEN (AUS GOOGLE SHEET ODER LOKALER FESTPLATTE)
+# HYBRID-DATEN ABFRAGEN
 # ---------------------------------------------------------------------------
 
 tx, num_scanned = process_broker_csv_folder_hybrid(spreadsheet_name)
 tx = pre_process_corporate_actions(tx)
 
-OZ_TO_G = 31.1034768
 cash_data = load_cash_values_hybrid(spreadsheet_name)
 
 input_tagesgeld = float(cash_data.get("tagesgeld", 0.0))
@@ -1055,8 +569,7 @@ silver_ounces = silver_amount / OZ_TO_G if silver_unit == "Gramm (g)" else silve
 silver_cost = float(cash_data.get("silver_cost", 3000.0))
 silver_date_str = cash_data.get("silver_date", "2021-01-01")
 
-# Virtual Transactions für Gold, Silber, Cash, Andere Assets & Kredite in tx einbetten,
-# damit sie in den Transaktionsdetails, im Verlauf und in allen Auswertungen integriert sind.
+# Virtual Transactions für Gold, Silber, Cash, Andere Assets & Kredite in tx einbetten
 tx = tx.copy()
 virtual_tx_list = []
 if gold_ounces > 0:
@@ -1162,7 +675,6 @@ with st.sidebar:
                 
     if st.button("🗑️ Gespeicherte Historie löschen"):
         if is_using_gsheets():
-            # In GSheets löschen wir alle Einträge im Blatt 'portfolio_store'
             save_store_hybrid(spreadsheet_name, pd.DataFrame(columns=CANONICAL_COLUMNS))
         else:
             if STORE_PATH.exists():
@@ -1290,38 +802,32 @@ if open_df.empty:
     current_prices = {"GC=F": 0.0, "SI=F": 0.0}
 else:
     tickers_set = {t for t in ticker_map.values() if t}
-    tickers_set.add("GC=F")  # Live-Goldpreis mit anfragen
-    tickers_set.add("SI=F")  # Live-Silberpreis mit anfragen
+    tickers_set.add("GC=F")  
+    tickers_set.add("SI=F")  
     tickers = tuple(sorted(tickers_set))
     with st.spinner("Lade Live-Kurse..."):
         current_prices, last_update_time = fetch_current_prices(tickers)
 
-# Live-Rohstoffwerte in EUR bestimmen
 live_gold_price = current_prices.get("GC=F", 0.0) if "GC=F" in current_prices else 0.0
 total_gold_value = gold_ounces * live_gold_price
 
 live_silver_price = current_prices.get("SI=F", 0.0) if "SI=F" in current_prices else 0.0
 total_silver_value = silver_ounces * live_silver_price
 
-# Ticker & Kurse für alle Positionen ermitteln
 open_df = open_df.copy()
 open_df["Ticker"] = open_df["ISIN"].map(ticker_map)
 
-# Virtuelle Ticker festschreiben
 open_df.loc[open_df["ISIN"] == "Physisches Gold", "Ticker"] = "GC=F"
 open_df.loc[open_df["ISIN"] == "Physisches Silber", "Ticker"] = "SI=F"
 
-# Kurse mappen
 open_df["Aktueller Kurs"] = open_df["Ticker"].map(current_prices)
 open_df.loc[open_df["ISIN"] == "Physisches Gold", "Aktueller Kurs"] = live_gold_price
 open_df.loc[open_df["ISIN"] == "Physisches Silber", "Aktueller Kurs"] = live_silver_price
 
-# Cash, Andere Assets & Offene Kredite festschreiben
 open_df.loc[open_df["ISIN"] == "Physisches Cash", "Aktueller Kurs"] = 1.0
 open_df.loc[open_df["ISIN"] == "Andere Assets", "Aktueller Kurs"] = 1.0
 open_df.loc[open_df["ISIN"] == "Offene Kredite", "Aktueller Kurs"] = 1.0
 
-# Korrektur der Einstandskosten (invested) und avg_cost für Cash, Assets & Kredite
 open_df.loc[open_df["ISIN"] == "Physisches Cash", "invested"] = total_cash
 open_df.loc[open_df["ISIN"] == "Physisches Cash", "avg_cost"] = 1.0
 
@@ -1332,7 +838,7 @@ open_df.loc[open_df["ISIN"] == "Offene Kredite", "invested"] = -total_loans
 open_df.loc[open_df["ISIN"] == "Offene Kredite", "avg_cost"] = 1.0
 
 # ---------------------------------------------------------------------------
-# KORREKTUR: ABGELAUFENE/AUSGEBUCHTE DERIVATE (TOTALVERLUSTE) FILTERN
+# KORREKTUR: DERIVATE FILTERN
 # ---------------------------------------------------------------------------
 derivatives_mask = (
     (open_df["Name"].str.contains("Long|Short|Put|Call|Mini|Turbo|Faktor", case=False, na=False)) | 
@@ -1361,13 +867,12 @@ if not expired_derivatives.empty:
         }
         closed_df = pd.concat([closed_df, pd.DataFrame([new_closed_row])], ignore_index=True)
 
-# Berechne aktuellen Wert
 open_df["Aktueller Wert"] = open_df["shares"] * open_df["Aktueller Kurs"]
 open_df["Gewinn/Verlust (€)"] = open_df["Aktueller Wert"] - open_df["invested"]
 open_df["Gewinn/Verlust (%)"] = open_df["Gewinn/Verlust (€)"] / open_df["invested"].replace(0, np.nan) * 100
 
 # ---------------------------------------------------------------------------
-# SORTIERUNG: NACH INVESTIERTEM KAPITAL ABSTEIGEND
+# SORTIERUNG ABSTEIGEND
 # ---------------------------------------------------------------------------
 open_df = open_df.sort_values("invested", ascending=False).reset_index(drop=True)
 
@@ -1383,10 +888,7 @@ total_pl_pct = (total_pl_eur / total_invested * 100) if total_invested else 0
 total_realized = closed_df["realized_pl"].sum() if not closed_df.empty else 0.0
 total_fees = abs(tx["fee"].fillna(0).sum())
 
-# Separiere reinen Wertpapierwert ohne Edelmetalle und Cash/andere Assets/Kredite für Snapshot-Kacheln
 total_value_securities = open_df[~open_df["ISIN"].isin(VIRTUAL_ISINS)]["Aktueller Wert"].sum(skipna=True)
-
-# Vermögenswert inklusive Cash, Edelmetalle und Verbindlichkeiten (entspricht nun exakt total_value)
 net_worth = total_value
 
 # --- HIER HISTORISCHEN WERTE-VERLAUF VORAB LADEN ---
@@ -1395,7 +897,6 @@ with st.spinner("Lade Kurshistorie..."):
     price_history = fetch_price_history(tickers, earliest_date)
 value_history = build_portfolio_value_history(tx, price_history, ticker_map)
 
-# Gold & Silber historisch lückenlos ab Kaufdatum in Zeitreihe integrieren
 if not value_history.empty:
     if "GC=F" in price_history.columns:
         gold_start_dt = pd.to_datetime(gold_date_str)
@@ -1411,11 +912,10 @@ if not value_history.empty:
             value_history.loc[silver_mask, "Portfolio-Wert"] += silver_ounces * price_history.loc[silver_mask, "SI=F"]
             value_history.loc[silver_mask, "Eingezahltes Kapital"] += silver_cost
 
-    # Cash, andere Assets und Kredite flach in den historischen Verlauf integrieren
     value_history["Portfolio-Wert"] += total_cash + total_other_assets - total_loans
     value_history["Eingezahltes Kapital"] += total_cash + total_other_assets - total_loans
 
-# XIRR / IZF Cashflow-Berechnung (Renditeentwicklung für produktive Vermögenswerte: Wertpapiere & Edelmetalle)
+# XIRR / IZF Cashflow-Berechnung
 cash_flows = []
 tx_cf_active = tx[~tx["tx_id"].isin(ignored_tx_ids)].copy()
 for _, row in tx_cf_active.iterrows():
@@ -1499,10 +999,9 @@ else:
 
 st.markdown("---")
 
-# 3. Kennzahlen-Tabelle (Copilot-Style)
+# Kennzahlen-Tabelle (Copilot-Style)
 st.subheader("📋 Kennzahlen (Copilot-Style)")
 
-# Buchwerte für reine Wertpapiere ohne Edelmetalle und Cash/andere Assets/Kredite
 total_invested_securities = open_df[~open_df["ISIN"].isin(VIRTUAL_ISINS)]["invested"].sum()
 total_unrealized_pl_securities = total_value_securities - total_invested_securities
 total_unrealized_pct_securities = (total_unrealized_pl_securities / total_invested_securities * 100) if total_invested_securities else 0.0
@@ -1513,13 +1012,11 @@ color_unrealized_sec = "#2ca02c" if total_unrealized_pl_securities >= 0 else "#d
 sign_realized = "↑" if total_realized >= 0 else "↓"
 color_realized = "#2ca02c" if total_realized >= 0 else "#d62728"
 
-# Gold Live Performance
 gold_pl_eur = total_gold_value - gold_cost
 gold_pl_pct = (gold_pl_eur / gold_cost * 100) if gold_cost > 0 else 0.0
 sign_gold = "↑" if gold_pl_eur >= 0 else "↓"
 color_gold = "#2ca02c" if gold_pl_eur >= 0 else "#d62728"
 
-# Silber Live Performance
 silver_pl_eur = total_silver_value - silver_cost
 silver_pl_pct = (silver_pl_eur / silver_cost * 100) if silver_cost > 0 else 0.0
 sign_silver = "↑" if silver_pl_eur >= 0 else "↓"
@@ -1703,7 +1200,6 @@ if not value_history.empty:
     fig_line.add_trace(go.Scatter(x=value_history.index, y=value_history["Portfolio-Wert"], name="Gesamtvermögen", line=dict(width=2)))
     fig_line.add_trace(go.Scatter(x=value_history.index, y=value_history["Eingezahltes Kapital"], name="Eingezahltes Kapital (inkl. Cash/Metalle)", line=dict(width=2, dash="dash")))
     
-    # --- Marker für Transaktionen ( matched Transfers herausgefiltert) ---
     tx_active = tx[~tx["tx_id"].isin(ignored_tx_ids)].copy()
     tx_in_range = tx_active[(tx_active["date"] >= value_history.index.min()) & (tx_active["date"] <= value_history.index.max())].copy()
     
@@ -1729,7 +1225,6 @@ if not value_history.empty:
             )
         tx_in_range["hover_text"] = hover_texts
 
-        # Käufe plotten
         buys = tx_in_range[tx_in_range["type"] == "BUY"]
         if not buys.empty:
             fig_line.add_trace(go.Scatter(
@@ -1738,7 +1233,6 @@ if not value_history.empty:
                 text=buys["hover_text"], hoverinfo="text"
             ))
 
-        # Verkäufe plotten
         sells = tx_in_range[tx_in_range["type"] == "SELL"]
         if not sells.empty:
             fig_line.add_trace(go.Scatter(
@@ -1747,7 +1241,6 @@ if not value_history.empty:
                 text=sells["hover_text"], hoverinfo="text"
             ))
 
-        # Einbuchungen / Unmatched Transfers plotten
         receipts = tx_in_range[tx_in_range["type"].isin(["FREE_RECEIPT", "TRANSFER", "SPLIT"])]
         if not receipts.empty:
             fig_line.add_trace(go.Scatter(
@@ -1828,7 +1321,7 @@ if not value_history.empty:
     st.plotly_chart(fig_line, width="stretch")
 
 # ---------------------------------------------------------------------------
-# ETF LOOK-THROUGH (KUMULIERT ODER EINZELN)
+# ETF LOOK-THROUGH
 # ---------------------------------------------------------------------------
 st.markdown("---")
 st.subheader("🔍 ETF Look-Through: Einzelaktien-Exposure")
@@ -1942,13 +1435,12 @@ else:
                 )
 
 # ---------------------------------------------------------------------------
-# KONSOLIDIERTE DETAIL-DIAGNOSE (FÜR IDENTISCHE PRODUKTNAMEN WIE LANG & SCHWARZ)
+# KONSOLIDIERTE DETAIL-DIAGNOSE
 # ---------------------------------------------------------------------------
 st.markdown("---")
 st.subheader("🔍 Diagnose-Tool: Transaktions-Details")
 st.caption("Analysiere die lückenlose Historie aller Transaktionen und Buchungen pro Wertpapier.")
 
-# Gruppiere ISINs nach normalisiertem Namen
 name_groups = {}
 for is_id, raw_name in isin_names.items():
     norm_name = normalize_company_name(raw_name)
@@ -1976,7 +1468,6 @@ if selected_label:
 # ---------------------------------------------------------------------------
 # VERGANGENE INVESTMENTS
 # ---------------------------------------------------------------------------
-
 st.markdown("---")
 st.subheader("📜 Vergangene Investments")
 st.caption("Positionen, die du komplett verkauft hast (berechnet nach der Durchschnittskosten-Methode).")
