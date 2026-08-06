@@ -1540,6 +1540,12 @@ total_pl_pct = (total_pl_eur / total_invested * 100) if total_invested else 0
 total_realized = closed_df["realized_pl"].sum() if not closed_df.empty else 0.0
 total_fees = abs(tx["fee"].fillna(0).sum())
 
+# NEU: Diese beiden Berechnungen direkt hierhin verschieben
+total_return_abs = total_pl_eur + total_realized + total_dividends
+total_return_pct = (total_return_abs / total_invested * 100) if total_invested else 0.0
+
+# Separiere reinen Wertpapierwert ohne Edelmetalle und Cash/andere Assets/Kredite für Snapshot-Kacheln
+VIRTUAL_ISINS = ["Physisches Gold", "Physisches Silber", "Physisches Cash", "Andere Assets", "Offene Kredite"]
 total_value_securities = open_df[~open_df["ISIN"].isin(VIRTUAL_ISINS)]["Aktueller Wert"].sum(skipna=True)
 net_worth = total_value
 
@@ -1693,8 +1699,6 @@ silver_pl_pct = (silver_pl_eur / silver_cost * 100) if silver_cost > 0 else 0.0
 sign_silver = "↑" if silver_pl_eur >= 0 else "↓"
 color_silver = "#2ca02c" if silver_pl_eur >= 0 else "#d62728"
 
-total_return_abs = total_pl_eur + total_realized + total_dividends
-total_return_pct = (total_return_abs / total_invested * 100) if total_invested else 0.0
 sign_total = "↑" if total_return_abs >= 0 else "↓"
 color_total = "#2ca02c" if total_return_abs >= 0 else "#d62728"
 
