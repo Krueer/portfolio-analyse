@@ -923,21 +923,13 @@ def build_portfolio_value_history(tx: pd.DataFrame, price_history: pd.DataFrame,
     return result[result.index >= tx["date"].min()]
 
 # ---------------------------------------------------------------------------
-# HYBRID DATABASE SCHNITTSTELLEN (LOKAL VS GOOGLE SHEETS)
+# HYBRID DATABASE SCHNITTSTELLEN (MIT API-SCHONENDEM CACHING)
 # ---------------------------------------------------------------------------
 
 def is_using_gsheets() -> bool:
     return "gspread" in st.secrets
 
-def get_gspread_client():
-    try:
-        creds = dict(st.secrets["gspread"])
-        creds["private_key"] = creds["private_key"].replace("\\n", "\n")
-        return gspread.service_account_from_dict(creds)
-    except Exception as e:
-        st.error(f"Fehler bei der Google Sheets Verbindung: {e}")
-        return None
-
+@st.cache_data(show_spinner="Lade Transaktionen aus Google Sheets...", ttl=300)
 def load_store_hybrid(spreadsheet_name: str) -> pd.DataFrame:
     if is_using_gsheets():
         client = get_gspread_client()
@@ -971,11 +963,15 @@ def save_store_hybrid(spreadsheet_name: str, df: pd.DataFrame) -> None:
                 df_write = df.copy()
                 df_write["date"] = df_write["date"].astype(str)
                 worksheet.update([df_write.columns.values.tolist()] + df_write.values.tolist())
+                # Löscht den Lese-Cache, damit die neuen Daten sofort angezeigt werden
+                load_store_hybrid.clear()
             except Exception as e:
                 st.error(f"Fehler beim Speichern in Google Sheets: {e}")
     else:
         df.to_csv(STORE_PATH, index=False)
+        load_store_hybrid.clear()
 
+@st.cache_data(show_spinner="Lade Kontostände aus Google Sheets...", ttl=300)
 def load_cash_values_hybrid(spreadsheet_name: str) -> dict:
     defaults = {
         "tagesgeld": 0.0, 
@@ -983,12 +979,12 @@ def load_cash_values_hybrid(spreadsheet_name: str) -> dict:
         "darlehen": 0.0, 
         "andere_assets": 0.0, 
         "gold_unit": "Unzen (oz)",
-        "gold_amount": 3.0, 
-        "gold_cost": 5500.0,
+        "gold_amount": 0.0, 
+        "gold_cost": 0.0, 
         "gold_date": "2021-01-01",
         "silver_unit": "Unzen (oz)",
-        "silver_amount": 100.0, 
-        "silver_cost": 3000.0,
+        "silver_amount": 0.0, 
+        "silver_cost": 0.0, 
         "silver_date": "2021-01-01"
     }
     if is_using_gsheets():
@@ -1049,11 +1045,14 @@ def save_cash_values_hybrid(spreadsheet_name: str, tagesgeld: float, girokonto: 
                 worksheet.clear()
                 df = pd.DataFrame([data])
                 worksheet.update([df.columns.values.tolist()] + df.values.tolist())
+                # Löscht den Lese-Cache der Kontostände
+                load_cash_values_hybrid.clear()
             except Exception as e:
                 st.error(f"Fehler beim Speichern der Cash-Bestände in Google Sheets: {e}")
     else:
         try:
             CASH_STORE_PATH.write_text(json.dumps(data), encoding="utf-8")
+            load_cash_values_hybrid.clear()
         except Exception:
             pass
 
@@ -1152,15 +1151,15 @@ total_other_assets = float(cash_data.get("andere_assets", 0.0))
 total_loans = float(cash_data.get("darlehen", 0.0))
 
 gold_unit = cash_data.get("gold_unit", "Unzen (oz)")
-gold_amount = float(cash_data.get("gold_amount", 3.0))
+gold_amount = float(cash_data.get("gold_amount", 0.0))
 gold_ounces = gold_amount / OZ_TO_G if gold_unit == "Gramm (g)" else gold_amount
-gold_cost = float(cash_data.get("gold_cost", 5500.0))
+gold_cost = float(cash_data.get("gold_cost", 0.0))
 gold_date_str = cash_data.get("gold_date", "2021-01-01")
 
 silver_unit = cash_data.get("silver_unit", "Unzen (oz)")
-silver_amount = float(cash_data.get("silver_amount", 100.0))
+silver_amount = float(cash_data.get("silver_amount", 0.0))
 silver_ounces = silver_amount / OZ_TO_G if silver_unit == "Gramm (g)" else silver_amount
-silver_cost = float(cash_data.get("silver_cost", 3000.0))
+silver_cost = float(cash_data.get("silver_cost", 0.0))
 silver_date_str = cash_data.get("silver_date", "2021-01-01")
 
 # Virtual Transactions für Gold, Silber, Cash, Andere Assets & Kredite in tx einbetten
@@ -1273,6 +1272,7 @@ with st.sidebar:
         else:
             if STORE_PATH.exists():
                 STORE_PATH.unlink()
+            load_store_hybrid.clear()
         for f in BROKER_CSV_DIR.glob("*.csv"):
             f.unlink()
         st.rerun()
@@ -1339,14 +1339,14 @@ with st.sidebar:
     
     st.markdown("**Gold-Bestand**")
     input_gold_unit = st.selectbox("Einheit (Gold)", ["Unzen (oz)", "Gramm (g)"], index=0 if cash_data.get("gold_unit") == "Unzen (oz)" else 1, key="gold_unit_sel")
-    input_gold_amount = st.number_input("Gold-Menge", value=float(cash_data.get("gold_amount", 3.0)), step=0.1, format="%.4f", key="gold_amt_sel")
-    input_gold_cost = st.number_input("Gold-Kaufpreis gesamt (€)", value=float(cash_data.get("gold_cost", 5500.0)), step=100.0, format="%.2f", key="gold_cost_sel")
+    input_gold_amount = st.number_input("Gold-Menge", value=float(cash_data.get("gold_amount", 0.0)), step=0.1, format="%.4f", key="gold_amt_sel")
+    input_gold_cost = st.number_input("Gold-Kaufpreis gesamt (€)", value=float(cash_data.get("gold_cost", 0.0)), step=100.0, format="%.2f", key="gold_cost_sel")
     input_gold_date = st.date_input("Gold-Kaufdatum", value=pd.to_datetime(cash_data.get("gold_date", "2021-01-01")), key="gold_date_sel")
     
     st.markdown("**Silber-Bestand**")
     input_silver_unit = st.selectbox("Einheit (Silber)", ["Unzen (oz)", "Gramm (g)"], index=0 if cash_data.get("silver_unit") == "Unzen (oz)" else 1, key="silver_unit_sel")
-    input_silver_amount = st.number_input("Silber-Menge", value=float(cash_data.get("silver_amount", 100.0)), step=1.0, format="%.4f", key="silver_amt_sel")
-    input_silver_cost = st.number_input("Silber-Kaufpreis gesamt (€)", value=float(cash_data.get("silver_cost", 3000.0)), step=100.0, format="%.2f", key="silver_cost_sel")
+    input_silver_amount = st.number_input("Silber-Menge", value=float(cash_data.get("silver_amount", 0.0)), step=1.0, format="%.4f", key="silver_amt_sel")
+    input_silver_cost = st.number_input("Silber-Kaufpreis gesamt (€)", value=float(cash_data.get("silver_cost", 0.0)), step=100.0, format="%.2f", key="silver_cost_sel")
     input_silver_date = st.date_input("Silber-Kaufdatum", value=pd.to_datetime(cash_data.get("silver_date", "2021-01-01")), key="silver_date_sel")
     
     st.caption("💡 Hinweis: Offene Kredite bitte als *positive* Zahl eintragen. Sie werden im Gesamtvermögen automatisch abgezogen.")
@@ -1409,7 +1409,6 @@ live_silver_price = current_prices.get("SI=F", 0.0) if "SI=F" in current_prices 
 total_silver_value = silver_ounces * live_silver_price
 
 open_df = open_df.copy()
-# Typ auf 'object' erzwingen, um Pandas dtype Assignment-Fehler bei leeren Werten zu verhindern
 open_df["Ticker"] = open_df["ISIN"].map(ticker_map).astype(object)
 
 open_df.loc[open_df["ISIN"] == "Physisches Gold", "Ticker"] = "GC=F"
@@ -1716,7 +1715,7 @@ st.markdown(
             </tr>
             <tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.1); height: 45px;">
                 <td>
-                    <strong>Gesamt-Performance (Depot)</strong> 
+                    <strong style="font-size: 15px;">Gesamt-Performance (Depot)</strong> 
                     <span style="cursor: help; margin-left: 5px;" title="Der absolute Gesamtertrag deines Depots (unrealisierte Kursgewinne + realisierte Gewinne + erhaltene Dividenden).">ℹ️</span>
                 </td>
                 <td style="text-align: right;">
@@ -1726,14 +1725,14 @@ st.markdown(
             </tr>
             <tr style="border-bottom: 2px solid rgba(255, 255, 255, 0.2); height: 50px;">
                 <td>
-                    <strong>Gesamtvermögen</strong> 
+                    <strong style="font-size: 15px;">Gesamtvermögen</strong> 
                     <span style="cursor: help; margin-left: 5px;" title="Dein aggregierter Vermögenswert aus dem Depotwert, den Cash-Beständen, Gold und Sachwerten abzüglich der Kredite.">ℹ️</span>
                 </td>
                 <td style="text-align: right; font-weight: bold; font-size: 16px;">{net_worth:,.2f} €</td>
             </tr>
             <tr style="height: 50px;">
                 <td>
-                    <strong>Performance p.a. (IZF / XIRR)</strong> 
+                    <strong style="font-size: 15px;">Performance p.a. (IZF / XIRR)</strong> 
                     <span style="cursor: help; margin-left: 5px;" title="Die annualisierte zeitgewichtete Rendite unter Berücksichtigung aller Zu- und Abflüsse sowie dem heutigen Depotwert (bezogen auf investierte Vermögenswerte).">ℹ️</span>
                 </td>
                 <td style="text-align: right; font-size: 15px;">{izf_str}</td>
