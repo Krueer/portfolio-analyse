@@ -998,7 +998,7 @@ def build_portfolio_value_history(tx: pd.DataFrame, price_history: pd.DataFrame,
 st.title("📊 Portfolio-Analyse")
 
 # Standardmäßig Ihr Portfolio
-spreadsheet_name = "Portfolio_Alex"
+spreadsheet_name = "Portfolio_Linus"
 
 # Falls Google Sheets angebunden ist, blenden wir die Auswahl am Seitenkopf ein
 if is_using_gsheets():
@@ -1006,23 +1006,23 @@ if is_using_gsheets():
     with col_sel1:
         owner_choice = st.selectbox(
             "Portfolio-Besitzer auswählen", 
-            ["Alex", "Bruder (Getrenntes Portfolio)"],
+            ["Linus", "Janic (Getrenntes Portfolio)"],
             help="Hier kannst du auswählen, welches Portfolio geladen werden soll. Beide liegen sicher getrennt auf Google Drive."
         )
     with col_sel2:
         pin = st.text_input("PIN zur Freischaltung", type="password", help="Bitte gib die PIN ein, um Zugriff auf das Portfolio zu erhalten.")
     
     # Eine einfache PIN-Sperre für Basis-Privatsphäre (PINs hier nach Belieben anpassen!)
-    if owner_choice == "Alex":
+    if owner_choice == "Linus":
         if pin != "1234":
-            st.warning("Bitte gib die korrekte PIN für Alex ein, um die Daten freizuschalten.")
+            st.warning("Bitte gib die korrekte PIN für Linus ein, um die Daten freizuschalten.")
             st.stop()
-        spreadsheet_name = "Portfolio_Alex"
+        spreadsheet_name = "Portfolio_Linus"
     else:
         if pin != "5678":
-            st.warning("Bitte gib die korrekte PIN für deinen Bruder ein, um die Daten freizuschalten.")
+            st.warning("Bitte gib die korrekte PIN für Janic ein, um die Daten freizuschalten.")
             st.stop()
-        spreadsheet_name = "Portfolio_Bruder"
+        spreadsheet_name = "Portfolio_Janic"
 else:
     # Lokal verhalten wir uns wie gewohnt
     migrate_database()
