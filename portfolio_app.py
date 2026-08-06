@@ -1250,7 +1250,7 @@ ignored_tx_ids, inbound_to_outbound = identify_portfolio_transfers(tx)
 cash_data = load_cash_values_hybrid(spreadsheet_name)
 
 # ---------------------------------------------------------------------------
-# SIDEBAR 3: WEITERE KONTEN RENDERING (NUR SPEICHERN BEI KLICK)
+# SIDEBAR 3: WEITERE KONTEN RENDERING (NUR SPEICHERN BEI KLICK - JETZT MIT ST.FORM)
 # ---------------------------------------------------------------------------
 
 with st.sidebar:
@@ -1258,47 +1258,51 @@ with st.sidebar:
     st.header("3. Weitere Konten")
     st.caption("Trage Cash-Bestände, Gold, Silber und Verbindlichkeiten ein.")
     
-    input_tagesgeld = st.number_input("Tagesgeld (€)", value=float(cash_data.get("tagesgeld", 0.0)), step=100.0, format="%.2f")
-    input_girokonto = st.number_input("Girokonto (€)", value=float(cash_data.get("girokonto", 0.0)), step=100.0, format="%.2f")
-    input_andere_assets = st.number_input("Andere Assets (Immobilien, geschätzt) (€)", value=float(cash_data.get("andere_assets", 0.0)), step=1000.0, format="%.2f")
-    input_darlehen = st.number_input("Offenes Darlehen / Kredite (€)", value=float(cash_data.get("darlehen", 0.0)), step=1000.0, format="%.2f")
-    
-    st.markdown("**Gold-Bestand**")
-    input_gold_unit = st.selectbox("Einheit (Gold)", ["Unzen (oz)", "Gramm (g)"], index=0 if cash_data.get("gold_unit") == "Unzen (oz)" else 1, key="gold_unit_sel")
-    input_gold_amount = st.number_input("Gold-Menge", value=float(cash_data.get("gold_amount", 0.0)), step=0.1, format="%.4f", key="gold_amt_sel")
-    input_gold_cost = st.number_input("Gold-Kaufpreis gesamt (€)", value=float(cash_data.get("gold_cost", 0.0)), step=100.0, format="%.2f", key="gold_cost_sel")
-    input_gold_date = st.date_input("Gold-Kaufdatum", value=pd.to_datetime(cash_data.get("gold_date", "2021-01-01")), key="gold_date_sel")
-    
-    st.markdown("**Silber-Bestand**")
-    input_silver_unit = st.selectbox("Einheit (Silber)", ["Unzen (oz)", "Gramm (g)"], index=0 if cash_data.get("silver_unit") == "Unzen (oz)" else 1, key="silver_unit_sel")
-    input_silver_amount = st.number_input("Silber-Menge", value=float(cash_data.get("silver_amount", 0.0)), step=1.0, format="%.4f", key="silver_amt_sel")
-    input_silver_cost = st.number_input("Silber-Kaufpreis gesamt (€)", value=float(cash_data.get("silver_cost", 0.0)), step=100.0, format="%.2f", key="silver_cost_sel")
-    input_silver_date = st.date_input("Silber-Kaufdatum", value=pd.to_datetime(cash_data.get("silver_date", "2021-01-01")), key="silver_date_sel")
-    
-    gold_date_str_input = input_gold_date.strftime("%Y-%m-%d")
-    silver_date_str_input = input_silver_date.strftime("%Y-%m-%d")
-    
-    st.caption("💡 Hinweis: Offene Kredite bitte als *positive* Zahl eintragen. Sie werden im Gesamtvermögen automatisch abgezogen.")
-    
-    # Der Speichern-Button schont Ihre API-Quota
-    if st.button("💾 Änderungen speichern", use_container_width=True):
-        save_cash_values_hybrid(
-            spreadsheet_name,
-            input_tagesgeld,
-            input_girokonto,
-            input_darlehen,
-            input_andere_assets,
-            input_gold_unit,
-            input_gold_amount,
-            input_gold_cost,
-            gold_date_str_input,
-            input_silver_unit,
-            input_silver_amount,
-            input_silver_cost,
-            silver_date_str_input
-        )
-        st.success("Werte erfolgreich gespeichert!")
-        st.rerun()
+    # Verpacken in ein Formular für fehlerfreie Mobile-Eingabe
+    with st.form("cash_form", clear_on_submit=False):
+        input_tagesgeld = st.number_input("Tagesgeld (€)", value=float(cash_data.get("tagesgeld", 0.0)), step=100.0, format="%.2f")
+        input_girokonto = st.number_input("Girokonto (€)", value=float(cash_data.get("girokonto", 0.0)), step=100.0, format="%.2f")
+        input_andere_assets = st.number_input("Andere Assets (Immobilien, geschätzt) (€)", value=float(cash_data.get("andere_assets", 0.0)), step=1000.0, format="%.2f")
+        input_darlehen = st.number_input("Offenes Darlehen / Kredite (€)", value=float(cash_data.get("darlehen", 0.0)), step=1000.0, format="%.2f")
+        
+        st.markdown("**Gold-Bestand**")
+        input_gold_unit = st.selectbox("Einheit (Gold)", ["Unzen (oz)", "Gramm (g)"], index=0 if cash_data.get("gold_unit") == "Unzen (oz)" else 1, key="gold_unit_sel")
+        input_gold_amount = st.number_input("Gold-Menge", value=float(cash_data.get("gold_amount", 0.0)), step=0.1, format="%.4f", key="gold_amt_sel")
+        input_gold_cost = st.number_input("Gold-Kaufpreis gesamt (€)", value=float(cash_data.get("gold_cost", 0.0)), step=100.0, format="%.2f", key="gold_cost_sel")
+        input_gold_date = st.date_input("Gold-Kaufdatum", value=pd.to_datetime(cash_data.get("gold_date", "2021-01-01")), key="gold_date_sel")
+        
+        st.markdown("**Silber-Bestand**")
+        input_silver_unit = st.selectbox("Einheit (Silber)", ["Unzen (oz)", "Gramm (g)"], index=0 if cash_data.get("silver_unit") == "Unzen (oz)" else 1, key="silver_unit_sel")
+        input_silver_amount = st.number_input("Silber-Menge", value=float(cash_data.get("silver_amount", 0.0)), step=1.0, format="%.4f", key="silver_amt_sel")
+        input_silver_cost = st.number_input("Silber-Kaufpreis gesamt (€)", value=float(cash_data.get("silver_cost", 0.0)), step=100.0, format="%.2f", key="silver_cost_sel")
+        input_silver_date = st.date_input("Silber-Kaufdatum", value=pd.to_datetime(cash_data.get("silver_date", "2021-01-01")), key="silver_date_sel")
+        
+        gold_date_str_input = input_gold_date.strftime("%Y-%m-%d")
+        silver_date_str_input = input_silver_date.strftime("%Y-%m-%d")
+        
+        st.caption("💡 Hinweis: Offene Kredite bitte als *positive* Zahl eintragen. Sie werden im Gesamtvermögen automatisch abgezogen.")
+        
+        # Speichern-Button innerhalb des Formulars
+        submit_button = st.form_submit_button("💾 Änderungen speichern", use_container_width=True)
+        
+        if submit_button:
+            save_cash_values_hybrid(
+                spreadsheet_name,
+                input_tagesgeld,
+                input_girokonto,
+                input_darlehen,
+                input_andere_assets,
+                input_gold_unit,
+                input_gold_amount,
+                input_gold_cost,
+                gold_date_str_input,
+                input_silver_unit,
+                input_silver_amount,
+                input_silver_cost,
+                silver_date_str_input
+            )
+            st.success("Werte erfolgreich gespeichert!")
+            st.rerun()
 
 # ---------------------------------------------------------------------------
 # WEITERE BERECHNUNGSWERTE ABLEITEN
@@ -1828,6 +1832,10 @@ pie_df = open_df.dropna(subset=["Aktueller Wert"])
 if not pie_df.empty:
     fig_pie = px.pie(pie_df, names="Name", values="Aktueller Wert", hole=0.45)
     fig_pie.update_traces(textposition="inside", textinfo="percent+label")
+    
+    # Legende nach unten schieben
+    fig_pie.update_layout(legend=dict(orientation="h", y=-0.1, x=0.5, xanchor="center", yanchor="top"))
+    
     st.plotly_chart(fig_pie, width="stretch")
 
 st.markdown("---")
@@ -1954,7 +1962,11 @@ if not value_history.empty:
             hoverinfo="text"
         ))
 
-    fig_line.update_layout(yaxis_title="EUR", legend=dict(orientation="h", y=1.02, x=1))
+    # Legende nach unten schieben
+    fig_line.update_layout(
+        yaxis_title="EUR", 
+        legend=dict(orientation="h", y=-0.2, x=0.5, xanchor="center", yanchor="top")
+    )
     st.plotly_chart(fig_line, width="stretch")
 
 # ---------------------------------------------------------------------------
