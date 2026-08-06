@@ -58,6 +58,36 @@ BROKER_CSV_DIR = APP_DIR / "CSVs von Banken und Brokern"
 
 BROKER_CSV_DIR.mkdir(parents=True, exist_ok=True)
 
+# ISIN -> Yahoo-Finance-Ticker Standard-Mapping
+DEFAULT_ISIN_TICKER_MAP = {
+    "IE00B4L5Y983": "EUNL.DE",     # iShares Core MSCI World UCITS ETF (Acc)
+    "IE00BKM4GZ66": "IS3N.DE",     # iShares Core MSCI EM IMI UCITS ETF (Acc)
+    "IE0003XJA0J9": "WEBN.DE",     # Amundi Prime All Country World UCITS ETF (Acc)
+    "DE0007664039": "VOW3.DE",     # Volkswagen (Vz.)
+    "NL0000235190": "AIR.DE",      # Airbus
+    "US5949181045": "MSFT",        # Microsoft
+    "DE000LS1LUS9": "LUS.DE",      # Lang & Schwarz
+    "DK0062498333": "NOV.DE",      # Novo-Nordisk (B)
+    "US8887871080": "TOST",        # Toast
+    "US69608A1088": "PLTR",        # Palantir Technologies
+    "DE0007030009": "RHM.DE",      # Rheinmetall
+    "US4330001060": "HIMS",        # Hims & Hers Health
+    "US3825501014": "GT",          # Goodyear Tire & Rubber
+    "DE0005439004": "CON.DE",      # Continental
+    "US98423F1093": "XMTR",        # Xometry
+    "US64110L1061": "NFLX",        # Netflix
+    "FR0010755611": "CL2.PA",      # MSCI USA 2x Lev
+    "IE00BYWQWR46": "ESP0.DE",     # VanEck Video Gaming
+    "US62914V1061": "NIO",         # NIO
+    "CNE100000296": "BYDDF",       # BYD
+    "US3364331070": "FSLR",        # First Solar
+    "US88160R1014": "TSLA",        # Tesla
+    "DE0006599905": "MRK.DE",      # Merck
+    "LU1778762911": "SPOT",        # Spotify
+    "US84615Q1031": "SPCX",        # SpaceX
+    "BTC": "BTC-EUR",              # Bitcoin
+}
+
 # Statische Fallback-Holdings für bekannte ETFs
 ISIN_HOLDINGS_FALLBACK = {
     "IE00B4L5Y983": [
@@ -972,6 +1002,7 @@ def save_store_hybrid(spreadsheet_name: str, df: pd.DataFrame) -> None:
                 df_write = df.copy()
                 df_write["date"] = df_write["date"].astype(str)
                 worksheet.update([df_write.columns.values.tolist()] + df_write.values.tolist())
+                # Löscht den Lese-Cache, damit die neuen Daten sofort angezeigt werden
                 load_store_hybrid.clear()
             except Exception as e:
                 st.error(f"Fehler beim Speichern in Google Sheets: {e}")
@@ -1053,6 +1084,7 @@ def save_cash_values_hybrid(spreadsheet_name: str, tagesgeld: float, girokonto: 
                 worksheet.clear()
                 df = pd.DataFrame([data])
                 worksheet.update([df.columns.values.tolist()] + df.values.tolist())
+                # Löscht den Lese-Cache der Kontostände
                 load_cash_values_hybrid.clear()
             except Exception as e:
                 st.error(f"Fehler beim Speichern der Cash-Bestände in Google Sheets: {e}")
@@ -1706,7 +1738,7 @@ st.markdown(
             </tr>
             <tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.1); height: 45px;">
                 <td>
-                    <strong style="font-size: 15px;">Gesamt-Performance (Depot)</strong> 
+                    <strong>Gesamt-Performance (Depot)</strong> 
                     <span style="cursor: help; margin-left: 5px;" title="Der absolute Gesamtertrag deines Depots (unrealisierte Kursgewinne + realisierte Gewinne + erhaltene Dividenden).">ℹ️</span>
                 </td>
                 <td style="text-align: right;">
