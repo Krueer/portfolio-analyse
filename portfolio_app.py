@@ -976,7 +976,9 @@ def build_portfolio_value_history(tx: pd.DataFrame, price_history: pd.DataFrame,
 def is_using_gsheets() -> bool:
     return "gspread" in st.secrets
 
+@st.cache_resource(show_spinner=False)
 def get_gspread_client():
+    """Authentifiziert sich einmalig bei Google (schont Ressourcen und beschleunigt Ladezeiten drastisch)."""
     try:
         creds = dict(st.secrets["gspread"])
         creds["private_key"] = creds["private_key"].replace("\\n", "\n")
