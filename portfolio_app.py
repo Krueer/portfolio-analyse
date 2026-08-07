@@ -987,6 +987,19 @@ def get_gspread_client():
         st.error(f"Fehler bei der Google Sheets Verbindung: {e}")
         return None
 
+@st.cache_data(show_spinner=False, ttl=3600)
+def get_spreadsheet_url(spreadsheet_name: str) -> str:
+    """Ruft den exakten, dynamischen Link zum Google Sheet ab (gecached für blitzschnelle Ladezeiten)."""
+    if is_using_gsheets():
+        client = get_gspread_client()
+        if client:
+            try:
+                sh = client.open(spreadsheet_name)
+                return sh.url
+            except Exception:
+                pass
+    return ""
+
 @st.cache_data(show_spinner="Lade Transaktionen aus Google Sheets...", ttl=300)
 def load_store_hybrid(spreadsheet_name: str) -> pd.DataFrame:
     if is_using_gsheets():
@@ -1201,6 +1214,13 @@ else:
 
 with st.sidebar:
     st.header("1. Portfolio-Daten")
+    
+    # Dynamischen Direktlink zum Google Sheet des aktiven Benutzers abrufen & anzeigen
+    spreadsheet_url = get_spreadsheet_url(spreadsheet_name)
+    if spreadsheet_url:
+        st.markdown(f"🟢 **[📂 Google Sheet öffnen]({spreadsheet_url})**")
+        st.caption("Öffnet deine Excel-Datenbank direkt in Google Drive")
+        st.markdown("<br>", unsafe_allow_html=True)
     
     # Zeige Anzahl der gefundenen Dateien im Ordner
     scanned_files_count = len(list(BROKER_CSV_DIR.glob("*.csv")))
