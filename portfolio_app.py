@@ -1759,7 +1759,7 @@ st.markdown(
             </tr>
             <tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.1); height: 45px;">
                 <td>
-                    <strong>Gebühren & Transaktionskosten</strong> 
+                    <strong>Gebühren / Transaktionskosten / Steuern</strong> 
                     <span style="cursor: help; margin-left: 5px;" title="Summe aller in der Historie erfassten Transaktionsgebühren.">ℹ️</span>
                 </td>
                 <td style="text-align: right; color: #d62728; font-weight: bold;">↓ -{total_fees:,.2f} €</td>
