@@ -80,7 +80,6 @@ DEFAULT_ISIN_TICKER_MAP = {
     "DE0007664039": "VOW3.DE",     # Volkswagen (Vz.)
     "NL0000235190": "AIR.DE",      # Airbus
     "US5949181045": "MSFT",        # Microsoft
-    "DE000LS1LUS9": "LUS.DE",      # Lang & Schwarz
     "DK0062498333": "NOV.DE",      # Novo-Nordisk (B)
     "US8887871080": "TOST",        # Toast
     "US69608A1088": "PLTR",        # Palantir Technologies
