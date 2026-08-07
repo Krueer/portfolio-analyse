@@ -1567,8 +1567,7 @@ total_value = open_df["Aktueller Wert"].sum(skipna=True)
 total_pl_eur = total_value - total_invested
 total_pl_pct = (total_pl_eur / total_invested * 100) if total_invested else 0
 total_realized = closed_df["realized_pl"].sum() if not closed_df.empty else 0.0
-total_fees = abs(tx["fee"].fillna(0).sum())
-
+total_fees = tx["fee"].fillna(0).abs().sum() # Bildet erst den Absolutwert jeder Zeile und addiert sie dann auf
 # NEU: Diese beiden Berechnungen direkt hierhin verschieben
 total_return_abs = total_pl_eur + total_realized + total_dividends
 total_return_pct = (total_return_abs / total_invested * 100) if total_invested else 0.0
