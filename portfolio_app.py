@@ -1637,23 +1637,32 @@ if not value_history.empty:
         "1 Monat (30T)": today_date - pd.Timedelta(days=30),
         "YTD (Jahr)": pd.Timestamp(year=today_date.year - 1, month=12, day=31),
         "1 Jahr (365T)": today_date - pd.Timedelta(days=365),
-        "MAX (Gesamt)": value_history.index[0]
+        "MAX (Gesamt)": None  # Sonderbehandlung für die reale Gesamt-Performance
     }
     
     p_cols = st.columns(6)
     for i, (label, target_dt) in enumerate(periods.items()):
-        perf = get_period_performance(value_history, target_dt)
         with p_cols[i]:
-            if perf is not None:
-                pl_eur, pl_pct = perf
-                sign = "+" if pl_eur >= 0 else ""
+            if label == "MAX (Gesamt)":
+                # Hier weisen wir exakt die reale, korrekte Performance aus der Tabelle aus
+                sign = "+" if total_return_abs >= 0 else ""
                 st.metric(
                     label=label,
-                    value=f"{pl_eur:,.2f} €",
-                    delta=f"{sign}{pl_pct:.2f}%"
+                    value=f"{total_return_abs:,.2f} €",
+                    delta=f"{sign}{total_return_pct:.2f}%"
                 )
             else:
-                st.metric(label=label, value="-", delta=None)
+                perf = get_period_performance(value_history, target_dt)
+                if perf is not None:
+                    pl_eur, pl_pct = perf
+                    sign = "+" if pl_eur >= 0 else ""
+                    st.metric(
+                        label=label,
+                        value=f"{pl_eur:,.2f} €",
+                        delta=f"{sign}{pl_pct:.2f}%"
+                    )
+                else:
+                    st.metric(label=label, value="-", delta=None)
 else:
     st.info("Kurshistorie wird geladen, um Performance-Indikatoren anzuzeigen.")
 
