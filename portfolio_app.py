@@ -1052,6 +1052,7 @@ def load_cash_values_hybrid(spreadsheet_name: str) -> dict:
         "girokonto": 0.0, 
         "darlehen": 0.0, 
         "andere_assets": 0.0, 
+        "cash_date": "2021-01-01", 
         "gold_unit": "Unzen (oz)",
         "gold_amount": 0.0, 
         "gold_cost": 0.0, 
@@ -1095,12 +1096,13 @@ def load_cash_values_hybrid(spreadsheet_name: str) -> dict:
                 return defaults
         return defaults
 
-def save_cash_values_hybrid(spreadsheet_name: str, tagesgeld: float, girokonto: float, darlehen: float, andere_assets: float, gold_unit: str, gold_amount: float, gold_cost: float, gold_date: str, silver_unit: str, silver_amount: float, silver_cost: float, silver_date: str) -> None:
+def save_cash_values_hybrid(spreadsheet_name: str, tagesgeld: float, girokonto: float, darlehen: float, andere_assets: float, cash_date: str, gold_unit: str, gold_amount: float, gold_cost: float, gold_date: str, silver_unit: str, silver_amount: float, silver_cost: float, silver_date: str) -> None:
     data = {
         "tagesgeld": tagesgeld,
         "girokonto": girokonto,
         "darlehen": darlehen,
         "andere_assets": andere_assets,
+        "cash_date": cash_date,  # NEU: Speichert das Cash-Datum im Sheet
         "gold_unit": gold_unit,
         "gold_amount": gold_amount,
         "gold_cost": gold_cost,
@@ -1280,10 +1282,13 @@ with st.sidebar:
     st.header("3. Weitere Konten")
     st.caption("Trage Cash-Bestände, Gold, Silber und Verbindlichkeiten ein.")
     
-    # Der Formular-Key ändert sich nun dynamisch je nach Benutzer, um Cache-Fehler beim Wechseln zu verhindern
     with st.form(f"cash_form_{spreadsheet_name}", clear_on_submit=False):
         input_tagesgeld = st.number_input("Tagesgeld (€)", value=float(cash_data.get("tagesgeld", 0.0)), step=100.0, format="%.2f", key=f"tagesgeld_{spreadsheet_name}")
         input_girokonto = st.number_input("Girokonto (€)", value=float(cash_data.get("girokonto", 0.0)), step=100.0, format="%.2f", key=f"girokonto_{spreadsheet_name}")
+        
+        # NEU: Datums-Wähler für das Cash-Guthaben
+        input_cash_date = st.date_input("Tagesgeld-/Cash-Datum", value=pd.to_datetime(cash_data.get("cash_date", "2021-01-01")), key=f"cash_date_sel_{spreadsheet_name}")
+        
         input_andere_assets = st.number_input("Andere Assets (Immobilien, geschätzt) (€)", value=float(cash_data.get("andere_assets", 0.0)), step=1000.0, format="%.2f", key=f"andere_assets_{spreadsheet_name}")
         input_darlehen = st.number_input("Offenes Darlehen / Kredite (€)", value=float(cash_data.get("darlehen", 0.0)), step=1000.0, format="%.2f", key=f"darlehen_{spreadsheet_name}")
         
@@ -1301,6 +1306,7 @@ with st.sidebar:
         
         gold_date_str_input = input_gold_date.strftime("%Y-%m-%d")
         silver_date_str_input = input_silver_date.strftime("%Y-%m-%d")
+        cash_date_str_input = input_cash_date.strftime("%Y-%m-%d")  # NEU
         
         st.caption("💡 Hinweis: Offene Kredite bitte als *positive* Zahl eintragen. Sie werden im Gesamtvermögen automatisch abgezogen.")
         
@@ -1313,6 +1319,7 @@ with st.sidebar:
                 input_girokonto,
                 input_darlehen,
                 input_andere_assets,
+                cash_date_str_input,  # NEU: Übergibt das gewählte Datum beim Speichern
                 input_gold_unit,
                 input_gold_amount,
                 input_gold_cost,
@@ -1331,6 +1338,7 @@ with st.sidebar:
 total_cash = input_tagesgeld + input_girokonto
 total_other_assets = input_andere_assets
 total_loans = input_darlehen
+cash_date_str = cash_date_str_input  # NEU
 
 gold_ounces = input_gold_amount / OZ_TO_G if input_gold_unit == "Gramm (g)" else input_gold_amount
 gold_cost = input_gold_cost
@@ -1371,7 +1379,7 @@ if silver_ounces > 0:
     })
 if total_cash > 0:
     virtual_tx_list.append({
-        "date": pd.Timestamp.now().normalize(),
+        "date": pd.to_datetime(cash_date_str),  
         "ISIN": "Physisches Cash",
         "Name": "Cash (Giro/Tagesgeld)",
         "type": "BUY",
