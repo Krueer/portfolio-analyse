@@ -1273,12 +1273,12 @@ ignored_tx_ids, inbound_to_outbound = identify_portfolio_transfers(tx)
 cash_data = load_cash_values_hybrid(spreadsheet_name)
 
 # ---------------------------------------------------------------------------
-# SIDEBAR 3: WEITERE KONTEN RENDERING (NUR SPEICHERN BEI KLICK - MIT SCHUTZ VOR STATE-ÜBERLAGERUNG)
+# SIDEBAR 2: WEITERE KONTEN RENDERING (NUR SPEICHERN BEI KLICK)
 # ---------------------------------------------------------------------------
 
 with st.sidebar:
     st.markdown("---")
-    st.header("3. Weitere Konten")
+    st.header("2. Weitere Konten") # Auf 2 geändert
     st.caption("Trage Cash-Bestände, Gold, Silber und Verbindlichkeiten ein.")
     
     with st.form(f"cash_form_{spreadsheet_name}", clear_on_submit=False):
@@ -1434,42 +1434,19 @@ if tx.empty:
 # Summe aller Dividenden aus den Transaktionen berechnen
 total_dividends = tx[tx["type"] == "DIVIDEND"]["amount"].sum() if not tx.empty else 0.0
 
-# --- Ticker-Zuordnung (mit automatischem Online-Finder!) ---
+# --- Ticker-Zuordnung im Hintergrund laden (ohne Anzeige in der Sidebar) ---
 all_isins = sorted(tx["ISIN"].unique())
 VIRTUAL_ISINS = ["Physisches Gold", "Physisches Silber", "Physisches Cash", "Andere Assets", "Offene Kredite"]
 ticker_input_isins = [isin for isin in all_isins if isin not in VIRTUAL_ISINS]
 isin_names = tx.groupby("ISIN")["Name"].last().to_dict()
 ticker_overrides = load_ticker_overrides(ticker_input_isins)
 
-with st.sidebar:
-    st.markdown("---")
-    st.header("2. Ticker-Zuordnung")
-    st.caption("Änderungen werden lokal in portfolio_ticker_map.json gesichert.")
-    
-    if st.button("🔄 Ticker auf Standard zurücksetzen"):
-        for key in list(st.session_state.keys()):
-            if key.startswith("ticker_"):
-                del st.session_state[key]
-        if TICKER_MAP_PATH.exists():
-            TICKER_MAP_PATH.unlink()
-        st.rerun()
-
-    ticker_map = {}
-    for isin in ticker_input_isins:
-        session_key = f"ticker_{isin}"
-        val_override = ticker_overrides.get(isin, "")
-        default = val_override if val_override != "" else DEFAULT_ISIN_TICKER_MAP.get(isin, "")
-        
-        if st.session_state.get(session_key) in ["", None, "NOVC.DE"]:
-            if default != "":
-                st.session_state[session_key] = default
-                
-        label = f"{str(isin_names.get(isin, ''))[:24]} ({isin})"
-        val = st.text_input(label, value=default, key=session_key)
-        ticker_map[isin] = val.strip()
-
-    if ticker_map != ticker_overrides:
-        save_ticker_overrides(mapping=ticker_map)
+# Zuordnung still im Hintergrund aufbauen, um die Sidebar clean zu halten
+ticker_map = {}
+for isin in ticker_input_isins:
+    val_override = ticker_overrides.get(isin, "")
+    default_val = val_override if val_override != "" else DEFAULT_ISIN_TICKER_MAP.get(isin, "")
+    ticker_map[isin] = default_val.strip() if default_val else ""
 
 # ---------------------------------------------------------------------------
 # POSITIONSVERARBEITUNG & LIVE-KURSE
