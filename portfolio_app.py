@@ -1286,7 +1286,7 @@ with st.sidebar:
         input_girokonto = st.number_input("Girokonto (€)", value=float(cash_data.get("girokonto", 0.0)), step=100.0, format="%.2f", key=f"girokonto_{spreadsheet_name}")
         
         # NEU: Datums-Wähler für das Cash-Guthaben
-        input_cash_date = st.date_input("Tagesgeld-/Cash-Datum \n(für Wertverlauf-Chart)", value=pd.to_datetime(cash_data.get("cash_date", "2021-01-01")), key=f"cash_date_sel_{spreadsheet_name}")
+        input_cash_date = st.date_input("Tagesgeld-/Cash-Datum", value=pd.to_datetime(cash_data.get("cash_date", "2021-01-01")), key=f"cash_date_sel_{spreadsheet_name}")
         
         input_andere_assets = st.number_input("Andere Assets (Immobilien, geschätzt) (€)", value=float(cash_data.get("andere_assets", 0.0)), step=1000.0, format="%.2f", key=f"andere_assets_{spreadsheet_name}")
         input_darlehen = st.number_input("Offenes Darlehen / Kredite (€)", value=float(cash_data.get("darlehen", 0.0)), step=1000.0, format="%.2f", key=f"darlehen_{spreadsheet_name}")
