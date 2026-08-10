@@ -1286,7 +1286,7 @@ with st.sidebar:
         input_girokonto = st.number_input("Girokonto (€)", value=float(cash_data.get("girokonto", 0.0)), step=100.0, format="%.2f", key=f"girokonto_{spreadsheet_name}")
         
         # NEU: Datums-Wähler für das Cash-Guthaben
-        input_cash_date = st.date_input("Tagesgeld-/Cash-Datum", value=pd.to_datetime(cash_data.get("cash_date", "2021-01-01")), key=f"cash_date_sel_{spreadsheet_name}")
+        input_cash_date = st.date_input("Tagesgeld-/Cash-Datum (für Wertverlauf-Chart)", value=pd.to_datetime(cash_data.get("cash_date", "2021-01-01")), key=f"cash_date_sel_{spreadsheet_name}")
         
         input_andere_assets = st.number_input("Andere Assets (Immobilien, geschätzt) (€)", value=float(cash_data.get("andere_assets", 0.0)), step=1000.0, format="%.2f", key=f"andere_assets_{spreadsheet_name}")
         input_darlehen = st.number_input("Offenes Darlehen / Kredite (€)", value=float(cash_data.get("darlehen", 0.0)), step=1000.0, format="%.2f", key=f"darlehen_{spreadsheet_name}")
@@ -1300,7 +1300,7 @@ with st.sidebar:
         st.markdown("**Silber-Bestand**")
         input_silver_unit = st.selectbox("Einheit (Silber)", ["Unzen (oz)", "Gramm (g)"], index=0 if cash_data.get("silver_unit") == "Unzen (oz)" else 1, key=f"silver_unit_sel_{spreadsheet_name}")
         input_silver_amount = st.number_input("Silber-Menge", value=float(cash_data.get("silver_amount", 0.0)), step=1.0, format="%.4f", key=f"silver_amt_sel_{spreadsheet_name}")
-        input_silver_cost = st.number_input("Silber-Kaufpreis gesamt (€)", value=float(cash_data.get("silver_cost", 0.0)), step=100.0, format="%.2f", key=f"silver_cost_sel_{spreadsheet_name}")
+        input_silver_cost = st.number_input("Silber-Kaufpreis gesamt (€) inkl. MwSt", value=float(cash_data.get("silver_cost", 0.0)), step=100.0, format="%.2f", key=f"silver_cost_sel_{spreadsheet_name}")
         input_silver_date = st.date_input("Silber-Kaufdatum", value=pd.to_datetime(cash_data.get("silver_date", "2021-01-01")), key=f"silver_date_sel_{spreadsheet_name}")
         
         gold_date_str_input = input_gold_date.strftime("%Y-%m-%d")
