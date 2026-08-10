@@ -1,0 +1,22 @@
+name: Keep App Awake
+
+on:
+  schedule:
+    - cron: "0 6,18 * * *"  # Läuft alle 12 Stunden (um 6:00 und 18:00 Uhr)
+  workflow_dispatch:        # Ermöglicht manuelles Auslösen auf GitHub
+
+jobs:
+  keep-awake:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write       # Gibt der Action Schreibrechte, um den Commit zu pushen
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: Push empty commit
+        run: |
+          git config --global user.name "GitHub Action"
+          git config --global user.email "action@github.com"
+          git commit --allow-empty -m "Automated commit to keep Streamlit app awake"
+          git push
