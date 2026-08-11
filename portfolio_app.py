@@ -1735,7 +1735,7 @@ st.markdown(
                 </td>
                 <td style="text-align: right;">
                     <span style="color: {color_unrealized_sec}; font-weight: bold; margin-right: 15px;">{sign_unrealized_sec} {total_unrealized_pct_securities:.2f}%</span>
-                    <span style="color: {color_unrealized_sec}; font-weight: bold;">{sign_unrealized_sec} {total_unrealized_pl_securities:,.2f} €</span>
+                    <span style="font-weight: bold;">{total_unrealized_pl_securities:,.2f} €</span>
                 </td>
             </tr>
             <tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.1); height: 45px;">
@@ -1752,7 +1752,7 @@ st.markdown(
                     <strong>Gebühren / Transaktionskosten / Steuern</strong> 
                     <span style="cursor: help; margin-left: 5px;" title="Summe aller in der Historie erfassten Transaktionsgebühren.">ℹ️</span>
                 </td>
-                <td style="text-align: right; color: #d62728; font-weight: bold;">↓ -{total_fees:,.2f} €</td>
+                <td style="text-align: right; color: {color_fees}; font-weight: bold;">{sign_fees}{total_fees:,.2f} €</td>
             </tr>
             <tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.1); height: 45px;">
                 <td>
@@ -1768,7 +1768,7 @@ st.markdown(
                 </td>
                 <td style="text-align: right;">
                     <span style="color: {color_gold}; font-weight: bold; margin-right: 15px;">{sign_gold} {gold_pl_pct:+.2f}%</span>
-                    <span style="color: {color_gold}; font-weight: bold;">{sign_gold} {total_gold_value:,.2f} €</span>
+                    <span style="font-weight: bold;">{total_gold_value:,.2f} €</span>
                 </td>
             </tr>
             <tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.1); height: 45px;">
@@ -1778,7 +1778,7 @@ st.markdown(
                 </td>
                 <td style="text-align: right;">
                     <span style="color: {color_silver}; font-weight: bold; margin-right: 15px;">{sign_silver} {silver_pl_pct:+.2f}%</span>
-                    <span style="color: {color_silver}; font-weight: bold;">{sign_silver} {total_silver_value:,.2f} €</span>
+                    <span style="font-weight: bold;">{total_silver_value:,.2f} €</span>
                 </td>
             </tr>
             <tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.1); height: 45px;">
@@ -1793,14 +1793,14 @@ st.markdown(
                     <strong>Offene Kredite / Darlehen</strong> 
                     <span style="cursor: help; margin-left: 5px;" title="Verbindlichkeiten und Schulden (werden vom Gesamtvermögen abgezogen).">ℹ️</span>
                 </td>
-                <td style="text-align: right; color: #d62728; font-weight: bold; font-size: 15px;">-{total_loans:,.2f} €</td>
+                <td style="text-align: right; color: {color_loans}; font-weight: bold; font-size: 15px;">{sign_loans}{total_loans:,.2f} €</td>
             </tr>
             <tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.1); height: 45px;">
                 <td>
                     <strong>Dividenden & Ausschüttungen</strong> 
                     <span style="cursor: help; margin-left: 5px;" title="Die Summe aller erhaltenen Dividendenauszahlungen.">ℹ️</span>
                 </td>
-                <td style="text-align: right; color: #2ca02c; font-weight: bold;">↑ {total_dividends:,.2f} €</td>
+                <td style="text-align: right; color: {color_dividends}; font-weight: bold;">{sign_dividends}{total_dividends:,.2f} €</td>
             </tr>
             <tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.1); height: 45px;">
                 <td>
@@ -1809,7 +1809,7 @@ st.markdown(
                 </td>
                 <td style="text-align: right;">
                     <span style="color: {color_total}; font-weight: bold; font-size: 15px; margin-right: 15px;">{sign_total} {total_return_pct:.2f}%</span>
-                    <span style="color: {color_total}; font-weight: bold; font-size: 15px;">{sign_total} {total_return_abs:,.2f} €</span>
+                    <span style="font-weight: bold; font-size: 15px;">{sign_total} {total_return_abs:,.2f} €</span>
                 </td>
             </tr>
             <tr style="border-bottom: 2px solid rgba(255, 255, 255, 0.2); height: 50px;">
@@ -1824,7 +1824,7 @@ st.markdown(
                     <strong>Performance p.a. (IZF / XIRR)</strong> 
                     <span style="cursor: help; margin-left: 5px;" title="Die annualisierte zeitgewichtete Rendite unter Berücksichtigung aller Zu- und Abflüsse sowie dem heutigen Depotwert (bezogen auf investierte Vermögenswerte).">ℹ️</span>
                 </td>
-                <td style="text-align: right; font-size: 15px;">{izf_str}</td>
+                <td style="text-align: right; font-size: 15px; color: {color_total}; font-weight: bold;">{izf_str}</td>
             </tr>
         </table>
     </div>
