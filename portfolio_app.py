@@ -2197,60 +2197,97 @@ else:
 # ---------------------------------------------------------------------------
 st.markdown("---")
 st.subheader("📈 Historische Zinseszins-Analyse")
-st.caption("Visualisiert die tatsächliche historische Entwicklung deines Gesamtvermögens aufgeteilt in Einzahlungen und Zinseszins-Gewinne.")
+st.caption("Visualisiert die tatsächliche historische Entwicklung deines Gesamtvermögens aufgeteilt in Einzahlungen, einfache Zinsen und den Zinseszins-Schneeballeffekt.")
 
 if not value_history.empty:
-    # Resampling auf Monats-Endwerte (API-schonend und optisch perfekt strukturiert)
+    # Quartalsweise Resampling für perfekte, lesbare Balkendichte (beseitigt das Quetschen der Achsenbeschriftung!)
     try:
-        hist_sampled = value_history.resample("ME").last().dropna()
+        hist_sampled = value_history.resample("QE").last().dropna()
     except ValueError:
-        hist_sampled = value_history.resample("M").last().dropna()
+        hist_sampled = value_history.resample("Q").last().dropna()
         
     if not hist_sampled.empty:
-        # Datensatz aufbereiten
         df_hist_analysis = pd.DataFrame(index=hist_sampled.index)
         df_hist_analysis["Einzahlungen"] = hist_sampled["Eingezahltes Kapital"]
-        df_hist_analysis["Zinsen"] = hist_sampled["Portfolio-Wert"] - hist_sampled["Eingezahltes Kapital"]
         df_hist_analysis["Gesamtkapital"] = hist_sampled["Portfolio-Wert"]
-        df_hist_analysis["Datum_Label"] = df_hist_analysis.index.strftime("%m / %Y")
         
-        # Zusammenfassende Kacheln des aktuellen Ist-Standes (letzter Monat der Historie)
+        # Generiert saubere Quartalsbeschriftungen (z.B. Q1 / 2024)
+        df_hist_analysis["Datum_Label"] = [f"Q{q} / {yr}" for q, yr in zip(df_hist_analysis.index.quarter, df_hist_analysis.index.year)]
+        
+        # Monatliche/Quartalsweise Zunahmen für lineares Zinswachstum berechnen
+        df_hist_analysis["Netto_Einzahlung"] = df_hist_analysis["Einzahlungen"].diff().fillna(df_hist_analysis["Einzahlungen"].iloc[0])
+        
+        # Berechne den IZF/XIRR als realen Zinssatz (default 7% falls nicht vorhanden)
+        r_rate = float(izf_val) if (izf_val is not None and izf_val > 0) else 0.07
+        
+        # Mathematische Trennung: Berechne lineare einfache Zinsen auf jede historische Einzahlungseinheit
+        simple_interest_list = []
+        for i, date_i in enumerate(df_hist_analysis.index):
+            simple_int = 0.0
+            for j in range(i + 1):
+                deposit_amount = df_hist_analysis["Netto_Einzahlung"].iloc[j]
+                deposit_date = df_hist_analysis.index[j]
+                years_elapsed = (date_i - deposit_date).days / 365.25
+                if years_elapsed > 0:
+                    simple_int += deposit_amount * r_rate * years_elapsed
+            simple_interest_list.append(simple_int)
+            
+        df_hist_analysis["Einfache_Zinsen"] = simple_interest_list
+        
+        # Aufteilen in einfache Zinsen & Zinseszins-Effekt (Begrenzung auf tatsächliche Gewinne zur Fehlervermeidung)
+        total_gains = df_hist_analysis["Gesamtkapital"] - df_hist_analysis["Einzahlungen"]
+        df_hist_analysis["Einfache_Zinsen"] = np.minimum(total_gains, df_hist_analysis["Einfache_Zinsen"])
+        df_hist_analysis["Einfache_Zinsen"] = np.maximum(0.0, df_hist_analysis["Einfache_Zinsen"])
+        df_hist_analysis["Zinseszins"] = total_gains - df_hist_analysis["Einfache_Zinsen"]
+        df_hist_analysis["Zinseszins"] = np.maximum(0.0, df_hist_analysis["Zinseszins"])
+        
+        # Letzten Datenpunkt für Kennzahlen auslesen
         latest_row = df_hist_analysis.iloc[-1]
+        total_gains_latest = latest_row["Gesamtkapital"] - latest_row["Einzahlungen"]
         
         st.markdown("<br>", unsafe_allow_html=True)
         sum_col1, sum_col2, sum_col3 = st.columns(3)
         sum_col1.metric("Aktuelles Vermögen (Ist-Stand)", f"{latest_row['Gesamtkapital']:,.2f} €")
         sum_col2.metric("Deine Einzahlungen gesamt", f"{latest_row['Einzahlungen']:,.2f} €")
-        sum_col3.metric("Erwirtschafteter Ertrag (Zinsen & Kursgewinne)", f"{latest_row['Zinsen']:,.2f} €")
+        sum_col3.metric("Erwirtschafteter Ertrag gesamt", f"{total_gains_latest:,.2f} €")
         
-        # Gestapeltes Balkendiagramm im Finanzfluss-Style erstellen
+        # Drei Stacked-Traces im Plotly-Finanzfluss-Style
         fig_hist_zins = go.Figure()
         
-        # Balken 1: Tatsächliche Einzahlungen (Finanzfluss-Blau)
+        # Stack 1: Einzahlungen (Finanzfluss-Blau)
         fig_hist_zins.add_trace(go.Bar(
             name="Einzahlungen",
             x=df_hist_analysis["Datum_Label"],
             y=df_hist_analysis["Einzahlungen"],
-            marker_color="rgba(59, 130, 246, 0.85)",  # Blau
+            marker_color="rgba(59, 130, 246, 0.85)",  
             hovertemplate="%{y:,.2f} €<extra></extra>"
         ))
         
-        # Balken 2: Tatsächliche Zinsen & Gewinne (Finanzfluss-Orange)
+        # Stack 2: Einfache Zinsen (Helleres Orange / linearer Ertrag)
         fig_hist_zins.add_trace(go.Bar(
-            name="Zinsen & Gewinne",
+            name="Einfache Zinsen (linearer Ertrag)",
             x=df_hist_analysis["Datum_Label"],
-            y=df_hist_analysis["Zinsen"],
-            marker_color="rgba(249, 115, 22, 0.85)",  # Orange
+            y=df_hist_analysis["Einfache_Zinsen"],
+            marker_color="rgba(253, 186, 116, 0.85)",  
             hovertemplate="%{y:,.2f} €<extra></extra>"
         ))
         
-        # Layout konfigurieren (Gestapelt, x-unified Hoverbox für Mobil-Kompatibilität)
+        # Stack 3: Zinseszins (Finanzfluss-Orange / Zins-auf-Zins-Schneeball)
+        fig_hist_zins.add_trace(go.Bar(
+            name="Zinseszins (Zins-auf-Zins)",
+            x=df_hist_analysis["Datum_Label"],
+            y=df_hist_analysis["Zinseszins"],
+            marker_color="rgba(249, 115, 22, 0.85)",  
+            hovertemplate="%{y:,.2f} €<extra></extra>"
+        ))
+        
         fig_hist_zins.update_layout(
             barmode="stack",
             hovermode="x unified",
-            xaxis_title="Datum",
+            xaxis_title="Datum (Quartale)",
             yaxis_title="Wert in EUR",
-            legend=dict(orientation="h", y=-0.2, x=0.5, xanchor="center", yanchor="top"),
+            xaxis=dict(tickangle=-45, tickmode="auto", nticks=12),  # Gekippte Beschriftung & saubere Abstände
+            legend=dict(orientation="h", y=-0.25, x=0.5, xanchor="center", yanchor="top"),
             margin=dict(t=10, b=10)
         )
         
