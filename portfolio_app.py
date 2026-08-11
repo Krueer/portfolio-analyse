@@ -2191,3 +2191,71 @@ else:
         width="stretch",
         hide_index=True,
     )
+
+# ---------------------------------------------------------------------------
+# 📊 HISTORISCHE ZINSESZINS-ANALYSE (FINANZFLUSS-STYLE)
+# ---------------------------------------------------------------------------
+st.markdown("---")
+st.subheader("📈 Historische Zinseszins-Analyse")
+st.caption("Visualisiert die tatsächliche historische Entwicklung deines Gesamtvermögens aufgeteilt in Einzahlungen und Zinseszins-Gewinne.")
+
+if not value_history.empty:
+    # Resampling auf Monats-Endwerte (API-schonend und optisch perfekt strukturiert)
+    try:
+        hist_sampled = value_history.resample("ME").last().dropna()
+    except ValueError:
+        hist_sampled = value_history.resample("M").last().dropna()
+        
+    if not hist_sampled.empty:
+        # Datensatz aufbereiten
+        df_hist_analysis = pd.DataFrame(index=hist_sampled.index)
+        df_hist_analysis["Einzahlungen"] = hist_sampled["Eingezahltes Kapital"]
+        df_hist_analysis["Zinsen"] = hist_sampled["Portfolio-Wert"] - hist_sampled["Eingezahltes Kapital"]
+        df_hist_analysis["Gesamtkapital"] = hist_sampled["Portfolio-Wert"]
+        df_hist_analysis["Datum_Label"] = df_hist_analysis.index.strftime("%m / %Y")
+        
+        # Zusammenfassende Kacheln des aktuellen Ist-Standes (letzter Monat der Historie)
+        latest_row = df_hist_analysis.iloc[-1]
+        
+        st.markdown("<br>", unsafe_allow_html=True)
+        sum_col1, sum_col2, sum_col3 = st.columns(3)
+        sum_col1.metric("Aktuelles Vermögen (Ist-Stand)", f"{latest_row['Gesamtkapital']:,.2f} €")
+        sum_col2.metric("Deine Einzahlungen gesamt", f"{latest_row['Einzahlungen']:,.2f} €")
+        sum_col3.metric("Erwirtschafteter Ertrag (Zinsen & Kursgewinne)", f"{latest_row['Zinsen']:,.2f} €")
+        
+        # Gestapeltes Balkendiagramm im Finanzfluss-Style erstellen
+        fig_hist_zins = go.Figure()
+        
+        # Balken 1: Tatsächliche Einzahlungen (Finanzfluss-Blau)
+        fig_hist_zins.add_trace(go.Bar(
+            name="Einzahlungen",
+            x=df_hist_analysis["Datum_Label"],
+            y=df_hist_analysis["Einzahlungen"],
+            marker_color="rgba(59, 130, 246, 0.85)",  # Blau
+            hovertemplate="%{y:,.2f} €<extra></extra>"
+        ))
+        
+        # Balken 2: Tatsächliche Zinsen & Gewinne (Finanzfluss-Orange)
+        fig_hist_zins.add_trace(go.Bar(
+            name="Zinsen & Gewinne",
+            x=df_hist_analysis["Datum_Label"],
+            y=df_hist_analysis["Zinsen"],
+            marker_color="rgba(249, 115, 22, 0.85)",  # Orange
+            hovertemplate="%{y:,.2f} €<extra></extra>"
+        ))
+        
+        # Layout konfigurieren (Gestapelt, x-unified Hoverbox für Mobil-Kompatibilität)
+        fig_hist_zins.update_layout(
+            barmode="stack",
+            hovermode="x unified",
+            xaxis_title="Datum",
+            yaxis_title="Wert in EUR",
+            legend=dict(orientation="h", y=-0.2, x=0.5, xanchor="center", yanchor="top"),
+            margin=dict(t=10, b=10)
+        )
+        
+        st.plotly_chart(fig_hist_zins, width="stretch")
+    else:
+        st.info("Nicht genügend Datenpunkte für eine historische Analyse vorhanden.")
+else:
+    st.info("Kurshistorie wird geladen, um die historische Zinseszins-Analyse anzuzeigen.")
