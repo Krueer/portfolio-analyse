@@ -937,8 +937,27 @@ def build_portfolio_value_history(tx: pd.DataFrame, price_history: pd.DataFrame,
     ignored_tx_ids, _ = identify_portfolio_transfers(tx)
     tx = tx[~tx["tx_id"].isin(ignored_tx_ids)].copy()
 
-    tx["cash_flow"] = -tx["amount"]
-    tx.loc[tx["type"].isin(["TRANSFER", "FREE_RECEIPT", "CORP_ACTION", "SPLIT"]), "cash_flow"] = 0.0
+    # Berechne den exakten historischen Cash-Flow (inklusive Einstandswerte von Depotübertragungen)
+    cash_flows = []
+    for idx, row in tx.iterrows():
+        if row["type"] in ["TRANSFER", "FREE_RECEIPT", "CORP_ACTION"]:
+            if row["shares"] > 0:
+                price = row["price"] if (pd.notna(row["price"]) and row["price"] > 0) else None
+                if price is None:
+                    ticker = ticker_map.get(row["ISIN"])
+                    price = fetch_historical_price(ticker, row["date"].strftime("%Y-%m-%d")) if ticker else None
+                
+                # Einfließende Transfers erhöhen das eingezahlte Kapital um den realen Einstandswert!
+                cost = (price * row["shares"]) if price is not None else 0.0
+                cash_flows.append(cost)
+            else:
+                cash_flows.append(0.0)
+        elif row["type"] == "SPLIT":
+            cash_flows.append(0.0)
+        else:
+            cash_flows.append(-row["amount"])
+            
+    tx["cash_flow"] = cash_flows
 
     all_dates = price_history.index
     total_value = pd.Series(0.0, index=all_dates)
@@ -967,7 +986,6 @@ def build_portfolio_value_history(tx: pd.DataFrame, price_history: pd.DataFrame,
 
     result = pd.DataFrame({"Portfolio-Wert": total_value, "Eingezahltes Kapital": invested_capital})
     return result[result.index >= tx["date"].min()]
-
 # ---------------------------------------------------------------------------
 # HYBRID DATABASE SCHNITTSTELLEN (MIT API-SCHONENDEM CACHING)
 # ---------------------------------------------------------------------------
@@ -2200,7 +2218,7 @@ st.subheader("📈 Historische Zinseszins-Analyse")
 st.caption("Visualisiert die tatsächliche historische Entwicklung deines Gesamtvermögens aufgeteilt in Einzahlungen und Zinseszins-Gewinne.")
 
 if not value_history.empty:
-    # Zurück zur monatlichen Ansicht für maximale Balken-Dichte
+    # Monatliche Ansicht für maximale Balken-Dichte
     try:
         hist_sampled = value_history.resample("ME").last().dropna()
     except ValueError:
@@ -2211,22 +2229,6 @@ if not value_history.empty:
         df_hist_analysis["Einzahlungen"] = hist_sampled["Eingezahltes Kapital"]
         df_hist_analysis["Gesamtkapital"] = hist_sampled["Portfolio-Wert"]
         df_hist_analysis["Datum_Label"] = df_hist_analysis.index.strftime("%m / %Y")
-        
-        # Finde das reale Datum des ersten Depotübertrags heraus
-        transfers_only = tx[tx["type"].isin(["TRANSFER", "FREE_RECEIPT"])]
-        if not transfers_only.empty:
-            first_transfer_date = pd.to_datetime(transfers_only["date"].min())
-        else:
-            first_transfer_date = pd.Timestamp.now()
-        
-        # KORREKTUR DEPOTÜBERTRÄGE AB DEM REAlEN TRANSFER-TAG:
-        # Das verhindert, dass wir historisch vor dem Transfer künstliche Verluste erzeugen!
-        tech_gains_latest = df_hist_analysis["Gesamtkapital"].iloc[-1] - df_hist_analysis["Einzahlungen"].iloc[-1]
-        transfer_diff = tech_gains_latest - total_return_abs
-        if transfer_diff > 0:
-            # Nur für Monate ab dem ersten Transfer aufschlagen
-            mask_after_transfer = df_hist_analysis.index >= first_transfer_date
-            df_hist_analysis.loc[mask_after_transfer, "Einzahlungen"] += transfer_diff
             
         # Berechne die monatlichen Netto-Einzahlungen
         df_hist_analysis["Netto_Einzahlung"] = df_hist_analysis["Einzahlungen"].diff().fillna(df_hist_analysis["Einzahlungen"].iloc[0])
@@ -2256,7 +2258,7 @@ if not value_history.empty:
                         simple_part_sum += deposit_amount * f_simple
                         total_part_sum += deposit_amount * f_total
             
-            # Tatsächlichen realen Gewinn ermitteln
+            # Tatsächlichen realen Gewinn ermitteln (jetzt nativ perfekt!)
             actual_gain = df_hist_analysis["Gesamtkapital"].iloc[i] - df_hist_analysis["Einzahlungen"].iloc[i]
             
             if actual_gain > 0:
