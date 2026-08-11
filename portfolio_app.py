@@ -1678,24 +1678,37 @@ total_invested_securities = open_df[~open_df["ISIN"].isin(VIRTUAL_ISINS)]["inves
 total_unrealized_pl_securities = total_value_securities - total_invested_securities
 total_unrealized_pct_securities = (total_unrealized_pl_securities / total_invested_securities * 100) if total_invested_securities else 0.0
 
-sign_unrealized_sec = "↑" if total_unrealized_pl_securities >= 0 else "↓"
-color_unrealized_sec = "#2ca02c" if total_unrealized_pl_securities >= 0 else "#d62728"
+# Formatierungen für Kennzahlen (Verhindert farbige Nullen und doppelte Einfärbung)
+sign_unrealized_sec = "↑" if total_unrealized_pl_securities > 1e-4 else ("↓" if total_unrealized_pl_securities < -1e-4 else "")
+color_unrealized_sec = "#2ca02c" if total_unrealized_pl_securities > 1e-4 else ("#d62728" if total_unrealized_pl_securities < -1e-4 else "inherit")
 
-sign_realized = "↑" if total_realized >= 0 else "↓"
-color_realized = "#2ca02c" if total_realized >= 0 else "#d62728"
+sign_realized = "↑" if total_realized > 1e-4 else ("↓" if total_realized < -1e-4 else "")
+color_realized = "#2ca02c" if total_realized > 1e-4 else ("#d62728" if total_realized < -1e-4 else "inherit")
 
+# Gold Live Performance
 gold_pl_eur = total_gold_value - gold_cost
 gold_pl_pct = (gold_pl_eur / gold_cost * 100) if gold_cost > 0 else 0.0
-sign_gold = "↑" if gold_pl_eur >= 0 else "↓"
-color_gold = "#2ca02c" if gold_pl_eur >= 0 else "#d62728"
+sign_gold = "↑" if gold_pl_eur > 1e-4 else ("↓" if gold_pl_eur < -1e-4 else "")
+color_gold = "#2ca02c" if gold_pl_eur > 1e-4 else ("#d62728" if gold_pl_eur < -1e-4 else "inherit")
 
+# Silber Live Performance
 silver_pl_eur = total_silver_value - silver_cost
 silver_pl_pct = (silver_pl_eur / silver_cost * 100) if silver_cost > 0 else 0.0
-sign_silver = "↑" if silver_pl_eur >= 0 else "↓"
-color_silver = "#2ca02c" if silver_pl_eur >= 0 else "#d62728"
+sign_silver = "↑" if silver_pl_eur > 1e-4 else ("↓" if silver_pl_eur < -1e-4 else "")
+color_silver = "#2ca02c" if silver_pl_eur > 1e-4 else ("#d62728" if silver_pl_eur < -1e-4 else "inherit")
 
-sign_total = "↑" if total_return_abs >= 0 else "↓"
-color_total = "#2ca02c" if total_return_abs >= 0 else "#d62728"
+sign_total = "↑" if total_return_abs > 1e-4 else ("↓" if total_return_abs < -1e-4 else "")
+color_total = "#2ca02c" if total_return_abs > 1e-4 else ("#d62728" if total_return_abs < -1e-4 else "inherit")
+
+# Dynamische Steuerung für Kredite, Dividenden & Gebühren bei Nullwerten
+color_loans = "#d62728" if total_loans > 1e-4 else "inherit"
+sign_loans = "-" if total_loans > 1e-4 else ""
+
+color_dividends = "#2ca02c" if total_dividends > 1e-4 else "inherit"
+sign_dividends = "↑ " if total_dividends > 1e-4 else ""
+
+color_fees = "#d62728" if total_fees > 1e-4 else "inherit"
+sign_fees = "↓ -" if total_fees > 1e-4 else ""
 
 izf_str = "-"
 if izf_val is not None:
