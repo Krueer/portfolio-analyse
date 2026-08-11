@@ -2222,7 +2222,7 @@ if not value_history.empty:
         # Berechne die monatlichen Netto-Einzahlungen
         df_hist_analysis["Netto_Einzahlung"] = df_hist_analysis["Einzahlungen"].diff().fillna(df_hist_analysis["Einzahlungen"].iloc[0])
         
-        # Berechne den IZF/XIRR als Zinssatz (default 7%)
+        # Berechne den IZF/XIRR als realen Zinssatz (default 7% falls nicht vorhanden)
         r_rate = float(izf_val) if (izf_val is not None and izf_val > 0) else 0.07
         
         simple_interest_list = []
@@ -2246,13 +2246,24 @@ if not value_history.empty:
                     if f_total > 1e-6:
                         simple_part_sum += deposit_amount * f_simple
                         total_part_sum += deposit_amount * f_total
-                        
-            # Teile den tatsächlichen realen Gewinn im Verhältnis von linearer zu exponentieller Zunahme auf
+            
+            # Tatsächlichen realen Gewinn ermitteln
             actual_gain = df_hist_analysis["Gesamtkapital"].iloc[i] - df_hist_analysis["Einzahlungen"].iloc[i]
-            if actual_gain > 0 and total_part_sum > 0:
-                ratio_simple = min(1.0, simple_part_sum / total_part_sum)
-                simple_val = actual_gain * ratio_simple
-                comp_val = actual_gain * (1.0 - ratio_simple)
+            
+            if actual_gain > 0:
+                # Liegt die Haltedauer unter einem Jahr, ist der Zinseszins-Anteil vernachlässigbar klein (fast rein einfache Zinsen)
+                years_since_start = (date_i - df_hist_analysis.index[0]).days / 365.25
+                if years_since_start <= 1.0:
+                    simple_val = actual_gain
+                    comp_val = 0.0
+                elif total_part_sum > 0:
+                    # Berechne das exakte mathematische Verhältnis von einfachem zu exponentiellem Wachstum
+                    ratio_simple = min(1.0, simple_part_sum / total_part_sum)
+                    simple_val = actual_gain * ratio_simple
+                    comp_val = actual_gain * (1.0 - ratio_simple)
+                else:
+                    simple_val = actual_gain
+                    comp_val = 0.0
             else:
                 simple_val = max(0.0, actual_gain)
                 comp_val = 0.0
