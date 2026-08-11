@@ -2197,51 +2197,73 @@ else:
 # ---------------------------------------------------------------------------
 st.markdown("---")
 st.subheader("📈 Historische Zinseszins-Analyse")
-st.caption("Visualisiert die tatsächliche historische Entwicklung deines Gesamtvermögens aufgeteilt in Einzahlungen, einfache Zinsen und den Zinseszins-Schneeballeffekt.")
+st.caption("Visualisiert die tatsächliche historische Entwicklung deines Gesamtvermögens aufgeteilt in Einzahlungen und Zinseszins-Gewinne.")
 
 if not value_history.empty:
-    # Quartalsweise Resampling für perfekte, lesbare Balkendichte (beseitigt das Quetschen der Achsenbeschriftung!)
+    # Zurück zur monatlichen Ansicht für maximale Balken-Dichte
     try:
-        hist_sampled = value_history.resample("QE").last().dropna()
+        hist_sampled = value_history.resample("ME").last().dropna()
     except ValueError:
-        hist_sampled = value_history.resample("Q").last().dropna()
+        hist_sampled = value_history.resample("M").last().dropna()
         
     if not hist_sampled.empty:
         df_hist_analysis = pd.DataFrame(index=hist_sampled.index)
         df_hist_analysis["Einzahlungen"] = hist_sampled["Eingezahltes Kapital"]
         df_hist_analysis["Gesamtkapital"] = hist_sampled["Portfolio-Wert"]
+        df_hist_analysis["Datum_Label"] = df_hist_analysis.index.strftime("%m / %Y")
         
-        # Generiert saubere Quartalsbeschriftungen (z.B. Q1 / 2024)
-        df_hist_analysis["Datum_Label"] = [f"Q{q} / {yr}" for q, yr in zip(df_hist_analysis.index.quarter, df_hist_analysis.index.year)]
-        
-        # Monatliche/Quartalsweise Zunahmen für lineares Zinswachstum berechnen
+        # KORREKTUR DEPOTÜBERTRÄGE: Addiere den Anschaffungswert der Transfers flach auf die Einzahlungen,
+        # damit die Grafik exakt Ihre reale Gesamt-Performance (total_return_abs) abbildet.
+        tech_gains_latest = df_hist_analysis["Gesamtkapital"].iloc[-1] - df_hist_analysis["Einzahlungen"].iloc[-1]
+        transfer_diff = tech_gains_latest - total_return_abs
+        if transfer_diff > 0:
+            df_hist_analysis["Einzahlungen"] += transfer_diff
+            
+        # Berechne die monatlichen Netto-Einzahlungen
         df_hist_analysis["Netto_Einzahlung"] = df_hist_analysis["Einzahlungen"].diff().fillna(df_hist_analysis["Einzahlungen"].iloc[0])
         
-        # Berechne den IZF/XIRR als realen Zinssatz (default 7% falls nicht vorhanden)
+        # Berechne den IZF/XIRR als Zinssatz (default 7%)
         r_rate = float(izf_val) if (izf_val is not None and izf_val > 0) else 0.07
         
-        # Mathematische Trennung: Berechne lineare einfache Zinsen auf jede historische Einzahlungseinheit
         simple_interest_list = []
+        compound_interest_list = []
+        
         for i, date_i in enumerate(df_hist_analysis.index):
-            simple_int = 0.0
+            simple_part_sum = 0.0
+            total_part_sum = 0.0
+            
             for j in range(i + 1):
                 deposit_amount = df_hist_analysis["Netto_Einzahlung"].iloc[j]
                 deposit_date = df_hist_analysis.index[j]
                 years_elapsed = (date_i - deposit_date).days / 365.25
+                
                 if years_elapsed > 0:
-                    simple_int += deposit_amount * r_rate * years_elapsed
-            simple_interest_list.append(simple_int)
+                    # Exponentieller Zinseszins-Faktor: (1+r)^t - 1
+                    f_total = (1 + r_rate)**years_elapsed - 1
+                    # Linearer Zins-Faktor: r * t
+                    f_simple = r_rate * years_elapsed
+                    
+                    if f_total > 1e-6:
+                        simple_part_sum += deposit_amount * f_simple
+                        total_part_sum += deposit_amount * f_total
+                        
+            # Teile den tatsächlichen realen Gewinn im Verhältnis von linearer zu exponentieller Zunahme auf
+            actual_gain = df_hist_analysis["Gesamtkapital"].iloc[i] - df_hist_analysis["Einzahlungen"].iloc[i]
+            if actual_gain > 0 and total_part_sum > 0:
+                ratio_simple = min(1.0, simple_part_sum / total_part_sum)
+                simple_val = actual_gain * ratio_simple
+                comp_val = actual_gain * (1.0 - ratio_simple)
+            else:
+                simple_val = max(0.0, actual_gain)
+                comp_val = 0.0
+                
+            simple_interest_list.append(simple_val)
+            compound_interest_list.append(comp_val)
             
         df_hist_analysis["Einfache_Zinsen"] = simple_interest_list
+        df_hist_analysis["Zinseszins"] = compound_interest_list
         
-        # Aufteilen in einfache Zinsen & Zinseszins-Effekt (Begrenzung auf tatsächliche Gewinne zur Fehlervermeidung)
-        total_gains = df_hist_analysis["Gesamtkapital"] - df_hist_analysis["Einzahlungen"]
-        df_hist_analysis["Einfache_Zinsen"] = np.minimum(total_gains, df_hist_analysis["Einfache_Zinsen"])
-        df_hist_analysis["Einfache_Zinsen"] = np.maximum(0.0, df_hist_analysis["Einfache_Zinsen"])
-        df_hist_analysis["Zinseszins"] = total_gains - df_hist_analysis["Einfache_Zinsen"]
-        df_hist_analysis["Zinseszins"] = np.maximum(0.0, df_hist_analysis["Zinseszins"])
-        
-        # Letzten Datenpunkt für Kennzahlen auslesen
+        # Letzten Datenpunkt für die Kacheln auslesen
         latest_row = df_hist_analysis.iloc[-1]
         total_gains_latest = latest_row["Gesamtkapital"] - latest_row["Einzahlungen"]
         
@@ -2265,16 +2287,16 @@ if not value_history.empty:
         
         # Stack 2: Einfache Zinsen (Helleres Orange / linearer Ertrag)
         fig_hist_zins.add_trace(go.Bar(
-            name="Einfache Zinsen (linearer Ertrag)",
+            name="Einfache Zinsen",
             x=df_hist_analysis["Datum_Label"],
             y=df_hist_analysis["Einfache_Zinsen"],
             marker_color="rgba(253, 186, 116, 0.85)",  
             hovertemplate="%{y:,.2f} €<extra></extra>"
         ))
         
-        # Stack 3: Zinseszins (Finanzfluss-Orange / Zins-auf-Zins-Schneeball)
+        # Stack 3: Zinseszins (Finanzfluss-Orange / Zins-auf-Zins)
         fig_hist_zins.add_trace(go.Bar(
-            name="Zinseszins (Zins-auf-Zins)",
+            name="Zinseszins (Schneeballeffekt)",
             x=df_hist_analysis["Datum_Label"],
             y=df_hist_analysis["Zinseszins"],
             marker_color="rgba(249, 115, 22, 0.85)",  
@@ -2284,9 +2306,9 @@ if not value_history.empty:
         fig_hist_zins.update_layout(
             barmode="stack",
             hovermode="x unified",
-            xaxis_title="Datum (Quartale)",
+            xaxis_title="Datum",
             yaxis_title="Wert in EUR",
-            xaxis=dict(tickangle=-45, tickmode="auto", nticks=12),  # Gekippte Beschriftung & saubere Abstände
+            xaxis=dict(tickmode="auto", nticks=10, tickangle=-45),  # Automatische, perfekt entzerrte Beschriftung
             legend=dict(orientation="h", y=-0.25, x=0.5, xanchor="center", yanchor="top"),
             margin=dict(t=10, b=10)
         )
