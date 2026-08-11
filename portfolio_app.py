@@ -2212,17 +2212,26 @@ if not value_history.empty:
         df_hist_analysis["Gesamtkapital"] = hist_sampled["Portfolio-Wert"]
         df_hist_analysis["Datum_Label"] = df_hist_analysis.index.strftime("%m / %Y")
         
-        # KORREKTUR DEPOTÜBERTRÄGE: Addiere den Anschaffungswert der Transfers flach auf die Einzahlungen,
-        # damit die Grafik exakt Ihre reale Gesamt-Performance (total_return_abs) abbildet.
+        # Finde das reale Datum des ersten Depotübertrags heraus
+        transfers_only = tx[tx["type"].isin(["TRANSFER", "FREE_RECEIPT"])]
+        if not transfers_only.empty:
+            first_transfer_date = pd.to_datetime(transfers_only["date"].min())
+        else:
+            first_transfer_date = pd.Timestamp.now()
+        
+        # KORREKTUR DEPOTÜBERTRÄGE AB DEM REAlEN TRANSFER-TAG:
+        # Das verhindert, dass wir historisch vor dem Transfer künstliche Verluste erzeugen!
         tech_gains_latest = df_hist_analysis["Gesamtkapital"].iloc[-1] - df_hist_analysis["Einzahlungen"].iloc[-1]
         transfer_diff = tech_gains_latest - total_return_abs
         if transfer_diff > 0:
-            df_hist_analysis["Einzahlungen"] += transfer_diff
+            # Nur für Monate ab dem ersten Transfer aufschlagen
+            mask_after_transfer = df_hist_analysis.index >= first_transfer_date
+            df_hist_analysis.loc[mask_after_transfer, "Einzahlungen"] += transfer_diff
             
         # Berechne die monatlichen Netto-Einzahlungen
         df_hist_analysis["Netto_Einzahlung"] = df_hist_analysis["Einzahlungen"].diff().fillna(df_hist_analysis["Einzahlungen"].iloc[0])
         
-        # Berechne den IZF/XIRR als realen Zinssatz (default 7% falls nicht vorhanden)
+        # Berechne den IZF/XIRR als Zinssatz (default 7% falls nicht vorhanden)
         r_rate = float(izf_val) if (izf_val is not None and izf_val > 0) else 0.07
         
         simple_interest_list = []
@@ -2251,7 +2260,6 @@ if not value_history.empty:
             actual_gain = df_hist_analysis["Gesamtkapital"].iloc[i] - df_hist_analysis["Einzahlungen"].iloc[i]
             
             if actual_gain > 0:
-                # Liegt die Haltedauer unter einem Jahr, ist der Zinseszins-Anteil vernachlässigbar klein (fast rein einfache Zinsen)
                 years_since_start = (date_i - df_hist_analysis.index[0]).days / 365.25
                 if years_since_start <= 1.0:
                     simple_val = actual_gain
