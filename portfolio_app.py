@@ -1735,7 +1735,7 @@ st.markdown(
                 </td>
                 <td style="text-align: right;">
                     <span style="color: {color_unrealized_sec}; font-weight: bold; margin-right: 15px;">{sign_unrealized_sec} {total_unrealized_pct_securities:.2f}%</span>
-                    <span style="font-weight: bold;">{total_unrealized_pl_securities:,.2f} €</span>
+                    <span style="color: {color_unrealized_sec}; font-weight: bold;">{total_unrealized_pl_securities:,.2f} €</span>
                 </td>
             </tr>
             <tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.1); height: 45px;">
@@ -1809,7 +1809,7 @@ st.markdown(
                 </td>
                 <td style="text-align: right;">
                     <span style="color: {color_total}; font-weight: bold; font-size: 15px; margin-right: 15px;">{sign_total} {total_return_pct:.2f}%</span>
-                    <span style="font-weight: bold; font-size: 15px;">{sign_total} {total_return_abs:,.2f} €</span>
+                    <span style="color: {color_total}; font-weight: bold; font-size: 15px;">{total_return_abs:,.2f} €</span>
                 </td>
             </tr>
             <tr style="border-bottom: 2px solid rgba(255, 255, 255, 0.2); height: 50px;">
@@ -2191,91 +2191,3 @@ else:
         width="stretch",
         hide_index=True,
     )
-
-# ---------------------------------------------------------------------------
-# 🔮 PROGNOSE-RECHNER: ZINSESZINS-EFFEKT (FINANZFLUSS-STYLE)
-# ---------------------------------------------------------------------------
-st.markdown("---")
-st.subheader("🔮 Zinseszins-Prognose (Zukunfts-Rechner)")
-st.caption("Projiziere das zukünftige Wachstum deines Gesamtvermögens basierend auf dem Zinseszinseffekt.")
-
-# Eingabe-Spalten (Automatisch vorausgefüllt mit deinen echten Depot-Werten!)
-col_p1, col_p2, col_p3, col_p4 = st.columns(4)
-
-with col_p1:
-    # Startkapital vorausgefüllt mit dem echten Gesamtvermögen
-    start_cap = st.number_input("Startkapital (€)", value=float(net_worth), step=5000.0, format="%.2f")
-
-with col_p2:
-    # Rendite vorausgefüllt mit deiner echten IZF/XIRR-Rendite p.a. (Fallback auf 7% bei Leerwerten)
-    default_rate = float(izf_val * 100) if (izf_val is not None and izf_val > 0) else 7.0
-    rate = st.slider("Jährliche Rendite (%)", min_value=0.0, max_value=25.0, value=default_rate, step=0.1)
-
-with col_p3:
-    sparrate = st.slider("Monatliche Sparrate (€)", min_value=0, max_value=5000, value=500, step=50)
-
-with col_p4:
-    years_proj = st.slider("Anlagezeitraum (Jahre)", min_value=1, max_value=50, value=25, step=1)
-
-# Zinseszins-Berechnung (Monat für Monat für exakte Zinseszinseffekte)
-total_capital = start_cap
-total_deposits = start_cap
-r = rate / 100.0
-
-proj_rows = []
-for yr in range(1, years_proj + 1):
-    for m in range(12):
-        total_capital = (total_capital + sparrate) * (1 + (r / 12))
-        total_deposits += sparrate
-        
-    zinsen = total_capital - total_deposits
-    proj_rows.append({
-        "Jahr": yr,
-        "Einzahlungen": round(total_deposits, 2),
-        "Zinsen": round(max(0.0, zinsen), 2),
-        "Gesamtkapital": round(total_capital, 2)
-    })
-    
-df_proj = pd.DataFrame(proj_rows)
-
-# Letztes Jahr für die Summary-Kennzahlen auslesen (wie im 2. Finanzfluss-Screenshot)
-last_year_row = df_proj.iloc[-1]
-
-st.markdown("<br>", unsafe_allow_html=True)
-sum_col1, sum_col2, sum_col3 = st.columns(3)
-sum_col1.metric(f"Gesamtkapital am Ende ({years_proj}. Jahr)", f"{last_year_row['Gesamtkapital']:,.2f} €")
-sum_col2.metric("Eingezahltes Kapital gesamt", f"{last_year_row['Einzahlungen']:,.2f} €")
-sum_col3.metric("Erwirtschaftete Zinsen gesamt", f"{last_year_row['Zinsen']:,.2f} €")
-
-# Gestapeltes Balkendiagramm im Finanzfluss-Style erstellen
-fig_proj = go.Figure()
-
-# Balken 1: Einzahlungen (Finanzfluss-Blau)
-fig_proj.add_trace(go.Bar(
-    name="Einzahlungen",
-    x=df_proj["Jahr"],
-    y=df_proj["Einzahlungen"],
-    marker_color="rgba(59, 130, 246, 0.85)",  # Blau
-    hovertemplate="%{y:,.2f} €<extra></extra>"
-))
-
-# Balken 2: Zinsen (Finanzfluss-Orange)
-fig_proj.add_trace(go.Bar(
-    name="Zinsen",
-    x=df_proj["Jahr"],
-    y=df_proj["Zinsen"],
-    marker_color="rgba(249, 115, 22, 0.85)",  # Orange
-    hovertemplate="%{y:,.2f} €<extra></extra>"
-))
-
-# Layout konfigurieren (Gestapelt, x-unified Hoverbox für Mobil-Kompatibilität)
-fig_proj.update_layout(
-    barmode="stack",
-    hovermode="x unified",
-    xaxis_title="Jahre",
-    yaxis_title="EUR",
-    legend=dict(orientation="h", y=-0.2, x=0.5, xanchor="center", yanchor="top"),
-    margin=dict(t=10, b=10)
-)
-
-st.plotly_chart(fig_proj, width="stretch")
