@@ -684,7 +684,7 @@ def extract_close_prices(data: pd.DataFrame, ticker: str) -> pd.Series:
 @st.cache_data(ttl=CACHE_TTL_PRICE, show_spinner=False)
 def fetch_current_prices(tickers: tuple) -> tuple[dict, str]:
     prices = {}
-    update_time_str = pd.Timestamp.now().strftime("%d.%m.%Y %H:%M:%S")
+    update_time_str = pd.Timestamp.now(tz="Europe/Berlin").strftime("%d.%m.%Y %H:%M:%S")
     if not tickers:
         return prices, update_time_str
         
