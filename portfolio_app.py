@@ -1473,18 +1473,16 @@ with st.spinner("Verarbeite Positionen..."):
     open_df, closed_df, unresolved_free_receipts = build_positions(tx, ticker_map)
 
 if open_df.empty:
-    tickers = ("GC=F", "SI=F")
+    tickers = ("XAUUSD=X", "SI=F")
     last_update_time = pd.Timestamp.now().strftime("%d.%m.%Y %H:%M:%S")
-    current_prices = {"GC=F": 0.0, "SI=F": 0.0}
+    current_prices = {"XAUUSD=X": 0.0, "SI=F": 0.0}
 else:
     tickers_set = {t for t in ticker_map.values() if t}
-    tickers_set.add("GC=F")  
-    tickers_set.add("SI=F")  
+    tickers_set.add("XAUUSD=X")  # Live-Spot-Goldpreis mit anfragen
+    tickers_set.add("SI=F")  # Live-Silberpreis mit anfragen
     tickers = tuple(sorted(tickers_set))
-    with st.spinner("Lade Live-Kurse..."):
-        current_prices, last_update_time = fetch_current_prices(tickers)
 
-live_gold_price = current_prices.get("GC=F", 0.0) if "GC=F" in current_prices else 0.0
+live_gold_price = current_prices.get("XAUUSD=X", 0.0) if "XAUUSD=X" in current_prices else 0.0
 total_gold_value = gold_ounces * live_gold_price
 
 live_silver_price = current_prices.get("SI=F", 0.0) if "SI=F" in current_prices else 0.0
@@ -1493,7 +1491,7 @@ total_silver_value = silver_ounces * live_silver_price
 # Typ der Ticker-Spalte auf Objekt setzen, um Pandas Assignment-Fehler bei leeren DataFrames zu verhindern
 open_df["Ticker"] = open_df["ISIN"].map(ticker_map).astype(object)
 
-open_df.loc[open_df["ISIN"] == "Physisches Gold", "Ticker"] = "GC=F"
+open_df.loc[open_df["ISIN"] == "Physisches Gold", "Ticker"] = "XAUUSD=X"  # Auf Spot-Gold geändert
 open_df.loc[open_df["ISIN"] == "Physisches Silber", "Ticker"] = "SI=F"
 
 open_df["Aktueller Kurs"] = open_df["Ticker"].map(current_prices)
@@ -1579,19 +1577,12 @@ with st.spinner("Lade Kurshistorie..."):
 value_history = build_portfolio_value_history(tx, price_history, ticker_map)
 
 if not value_history.empty:
-    if "GC=F" in price_history.columns:
+    if "XAUUSD=X" in price_history.columns:
         gold_start_dt = pd.to_datetime(gold_date_str)
         gold_mask = value_history.index >= gold_start_dt
         if gold_mask.any():
-            value_history.loc[gold_mask, "Portfolio-Wert"] += gold_ounces * price_history.loc[gold_mask, "GC=F"]
+            value_history.loc[gold_mask, "Portfolio-Wert"] += gold_ounces * price_history.loc[gold_mask, "XAUUSD=X"]
             value_history.loc[gold_mask, "Eingezahltes Kapital"] += gold_cost
-            
-    if "SI=F" in price_history.columns:
-        silver_start_dt = pd.to_datetime(silver_date_str)
-        silver_mask = value_history.index >= silver_start_dt
-        if silver_mask.any():
-            value_history.loc[silver_mask, "Portfolio-Wert"] += silver_ounces * price_history.loc[silver_mask, "SI=F"]
-            value_history.loc[silver_mask, "Eingezahltes Kapital"] += silver_cost
 
     value_history["Portfolio-Wert"] += total_cash + total_other_assets - total_loans
     value_history["Eingezahltes Kapital"] += total_cash + total_other_assets - total_loans
