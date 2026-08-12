@@ -1481,6 +1481,9 @@ else:
     tickers_set.add("XAUUSD=X")  # Live-Spot-Goldpreis mit anfragen
     tickers_set.add("SI=F")  # Live-Silberpreis mit anfragen
     tickers = tuple(sorted(tickers_set))
+    # NEU: Diese beiden Zeilen wieder einfügen, um die Kurse herunterzuladen
+    with st.spinner("Lade Live-Kurse..."):
+        current_prices, last_update_time = fetch_current_prices(tickers)
 
 live_gold_price = current_prices.get("XAUUSD=X", 0.0) if "XAUUSD=X" in current_prices else 0.0
 total_gold_value = gold_ounces * live_gold_price
