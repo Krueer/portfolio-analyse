@@ -1855,6 +1855,11 @@ st.markdown(
 # ---------------------------------------------------------------------------
 st.markdown("---")
 st.subheader("Positionsübersicht")
+
+# Dollar-Umrechnungskurs live anzeigen
+usd_eur_rate = fetch_usd_eur_rate()
+st.caption(f"💵 Aktueller Wechselkurs: **1 USD = {usd_eur_rate:.4f} EUR** (Alle US-Dollar-Wertpapiere und Rohstoffe werden live umgerechnet)")
+
 display_cols = {
     "Name": "Name",
     "ISIN": "ISIN",
