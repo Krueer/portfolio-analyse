@@ -1485,10 +1485,13 @@ else:
     with st.spinner("Lade Live-Kurse..."):
         current_prices, last_update_time = fetch_current_prices(tickers)
 
-live_gold_price = current_prices.get("XAUUSD=X", 0.0) if "XAUUSD=X" in current_prices else 0.0
+# Live-Rohstoffwerte in EUR bestimmen (sicher gegen temporäre Yahoo-Finance-Ladefehler abgesichert)
+val_gold = current_prices.get("XAUUSD=X")
+live_gold_price = float(val_gold) if (val_gold is not None and pd.notna(val_gold)) else 0.0
 total_gold_value = gold_ounces * live_gold_price
 
-live_silver_price = current_prices.get("SI=F", 0.0) if "SI=F" in current_prices else 0.0
+val_silver = current_prices.get("SI=F")
+live_silver_price = float(val_silver) if (val_silver is not None and pd.notna(val_silver)) else 0.0
 total_silver_value = silver_ounces * live_silver_price
 
 # Typ der Ticker-Spalte auf Objekt setzen, um Pandas Assignment-Fehler bei leeren DataFrames zu verhindern
@@ -1497,6 +1500,7 @@ open_df["Ticker"] = open_df["ISIN"].map(ticker_map).astype(object)
 open_df.loc[open_df["ISIN"] == "Physisches Gold", "Ticker"] = "XAUUSD=X"  # Auf Spot-Gold geändert
 open_df.loc[open_df["ISIN"] == "Physisches Silber", "Ticker"] = "SI=F"
 
+# Aktueller Kurs mappen & absichern
 open_df["Aktueller Kurs"] = open_df["Ticker"].map(current_prices)
 open_df.loc[open_df["ISIN"] == "Physisches Gold", "Aktueller Kurs"] = live_gold_price
 open_df.loc[open_df["ISIN"] == "Physisches Silber", "Aktueller Kurs"] = live_silver_price
@@ -1505,14 +1509,8 @@ open_df.loc[open_df["ISIN"] == "Physisches Cash", "Aktueller Kurs"] = 1.0
 open_df.loc[open_df["ISIN"] == "Andere Assets", "Aktueller Kurs"] = 1.0
 open_df.loc[open_df["ISIN"] == "Offene Kredite", "Aktueller Kurs"] = 1.0
 
-open_df.loc[open_df["ISIN"] == "Physisches Cash", "invested"] = total_cash
-open_df.loc[open_df["ISIN"] == "Physisches Cash", "avg_cost"] = 1.0
-
-open_df.loc[open_df["ISIN"] == "Andere Assets", "invested"] = total_other_assets
-open_df.loc[open_df["ISIN"] == "Andere Assets", "avg_cost"] = 1.0
-
-open_df.loc[open_df["ISIN"] == "Offene Kredite", "invested"] = -total_loans
-open_df.loc[open_df["ISIN"] == "Offene Kredite", "avg_cost"] = 1.0
+# WICHTIG: Wandelt alle eventuellen None/NaN-Kurse in 0.0 um, um Multiplikations-Abstürze dauerhaft zu verhindern!
+open_df["Aktueller Kurs"] = pd.to_numeric(open_df["Aktueller Kurs"], errors="coerce").fillna(0.0)
 
 # ---------------------------------------------------------------------------
 # KORREKTUR: DERIVATE FILTERN
