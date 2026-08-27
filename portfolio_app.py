@@ -1473,28 +1473,50 @@ with st.spinner("Verarbeite Positionen..."):
     open_df, closed_df, unresolved_free_receipts = build_positions(tx, ticker_map)
 
 if open_df.empty:
-    tickers = ("GC=F", "SI=F")
+    tickers = ("XAUUSD=X", "SI=F")
     last_update_time = pd.Timestamp.now().strftime("%d.%m.%Y %H:%M:%S")
-    current_prices = {"GC=F": 0.0, "SI=F": 0.0}
+    current_prices = {"XAUUSD=X": 0.0, "SI=F": 0.0}
 else:
     tickers_set = {t for t in ticker_map.values() if t}
-    tickers_set.add("GC=F")  
-    tickers_set.add("SI=F")  
+    tickers_set.add("XAUUSD=X")  # Live-Spot-Goldpreis mit anfragen
+    tickers_set.add("SI=F")  # Live-Silberpreis mit anfragen
     tickers = tuple(sorted(tickers_set))
     with st.spinner("Lade Live-Kurse..."):
         current_prices, last_update_time = fetch_current_prices(tickers)
 
-live_gold_price = current_prices.get("GC=F", 0.0) if "GC=F" in current_prices else 0.0
-total_gold_value = gold_ounces * live_gold_price
-
-live_silver_price = current_prices.get("SI=F", 0.0) if "SI=F" in current_prices else 0.0
-total_silver_value = silver_ounces * live_silver_price
-
 # Typ der Ticker-Spalte auf Objekt setzen, um Pandas Assignment-Fehler bei leeren DataFrames zu verhindern
 open_df["Ticker"] = open_df["ISIN"].map(ticker_map).astype(object)
 
-open_df.loc[open_df["ISIN"] == "Physisches Gold", "Ticker"] = "GC=F"
+open_df.loc[open_df["ISIN"] == "Physisches Gold", "Ticker"] = "XAUUSD=X"  # Auf Spot-Gold geändert
 open_df.loc[open_df["ISIN"] == "Physisches Silber", "Ticker"] = "SI=F"
+
+# ---------------------------------------------------------------------------
+# WEITERE BERECHNUNGSWERTE ABLEITEN & ABSICHERN
+# ---------------------------------------------------------------------------
+
+total_cash = input_tagesgeld + input_girokonto
+total_other_assets = input_andere_assets
+total_loans = input_darlehen
+cash_date_str = cash_date_str_input  
+
+gold_ounces_raw = input_gold_amount / OZ_TO_G if input_gold_unit == "Gramm (g)" else input_gold_amount
+val_gold_ounces = float(gold_ounces_raw) if (gold_ounces_raw is not None and pd.notna(gold_ounces_raw)) else 0.0
+gold_cost = input_gold_cost
+gold_date_str = gold_date_str_input
+
+silver_ounces_raw = input_silver_amount / OZ_TO_G if input_silver_unit == "Gramm (g)" else input_silver_amount
+val_silver_ounces = float(silver_ounces_raw) if (silver_ounces_raw is not None and pd.notna(silver_ounces_raw)) else 0.0
+silver_cost = input_silver_cost
+silver_date_str = silver_date_str_input
+
+# Live-Rohstoffwerte in EUR bestimmen (sicher gegen temporäre Ladefehler abgesichert)
+val_gold_price = current_prices.get("XAUUSD=X")
+live_gold_price = float(val_gold_price) if (val_gold_price is not None and pd.notna(val_gold_price)) else 0.0
+total_gold_value = val_gold_ounces * live_gold_price
+
+val_silver_price = current_prices.get("SI=F")
+live_silver_price = float(val_silver_price) if (val_silver_price is not None and pd.notna(val_silver_price)) else 0.0
+total_silver_value = val_silver_ounces * live_silver_price
 
 open_df["Aktueller Kurs"] = open_df["Ticker"].map(current_prices)
 open_df.loc[open_df["ISIN"] == "Physisches Gold", "Aktueller Kurs"] = live_gold_price
@@ -1512,6 +1534,9 @@ open_df.loc[open_df["ISIN"] == "Andere Assets", "avg_cost"] = 1.0
 
 open_df.loc[open_df["ISIN"] == "Offene Kredite", "invested"] = -total_loans
 open_df.loc[open_df["ISIN"] == "Offene Kredite", "avg_cost"] = 1.0
+
+# WICHTIG: Wandelt alle eventuellen None/NaN-Kurse in 0.0 um, um Multiplikations-Abstürze dauerhaft zu verhindern!
+open_df["Aktueller Kurs"] = pd.to_numeric(open_df["Aktueller Kurs"], errors="coerce").fillna(0.0)
 
 # ---------------------------------------------------------------------------
 # KORREKTUR: DERIVATE FILTERN
