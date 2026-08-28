@@ -1473,12 +1473,12 @@ with st.spinner("Verarbeite Positionen..."):
     open_df, closed_df, unresolved_free_receipts = build_positions(tx, ticker_map)
 
 if open_df.empty:
-    tickers = ("XAU-USD", "SI=F")  # Auf XAU-USD geändert
+    tickers = ("GLD", "SI=F")  # Auf GLD (SPDR Gold Shares) geändert
     last_update_time = pd.Timestamp.now().strftime("%d.%m.%Y %H:%M:%S")
-    current_prices = {"XAU-USD": 0.0, "SI=F": 0.0}
+    current_prices = {"GLD": 0.0, "SI=F": 0.0}
 else:
     tickers_set = {t for t in ticker_map.values() if t}
-    tickers_set.add("XAU-USD")  # Live-Spot-Goldpreis mit anfragen
+    tickers_set.add("GLD")  # Live-Gold-ETF mit anfragen
     tickers_set.add("SI=F")  # Live-Silberpreis mit anfragen
     tickers = tuple(sorted(tickers_set))
     with st.spinner("Lade Live-Kurse..."):
@@ -1487,7 +1487,7 @@ else:
 # Typ der Ticker-Spalte auf Objekt setzen, um Pandas Assignment-Fehler bei leeren DataFrames zu verhindern
 open_df["Ticker"] = open_df["ISIN"].map(ticker_map).astype(object)
 
-open_df.loc[open_df["ISIN"] == "Physisches Gold", "Ticker"] = "XAU-USD"  # Auf XAU-USD geändert
+open_df.loc[open_df["ISIN"] == "Physisches Gold", "Ticker"] = "GLD"  # Auf GLD geändert
 open_df.loc[open_df["ISIN"] == "Physisches Silber", "Ticker"] = "SI=F"
 
 # ---------------------------------------------------------------------------
@@ -1509,9 +1509,9 @@ val_silver_ounces = float(silver_ounces_raw) if (silver_ounces_raw is not None a
 silver_cost = input_silver_cost
 silver_date_str = silver_date_str_input
 
-# Live-Rohstoffwerte in EUR bestimmen (sicher gegen temporäre Ladefehler auf XAU-USD abgesichert)
-val_gold_price = current_prices.get("XAU-USD")
-live_gold_price = float(val_gold_price) if (val_gold_price is not None and pd.notna(val_gold_price)) else 0.0
+# Live-Rohstoffwerte in EUR bestimmen (sicher über GLD-ETF multipliziert mit 10.0 berechnet)
+val_gold_price = current_prices.get("GLD")
+live_gold_price = (float(val_gold_price) * 10.0) if (val_gold_price is not None and pd.notna(val_gold_price)) else 0.0
 total_gold_value = val_gold_ounces * live_gold_price
 
 val_silver_price = current_prices.get("SI=F")
@@ -1603,11 +1603,12 @@ with st.spinner("Lade Kurshistorie..."):
 value_history = build_portfolio_value_history(tx, price_history, ticker_map)
 
 if not value_history.empty:
-    if "XAU-USD" in price_history.columns:  # Auf XAU-USD geändert
+    if "GLD" in price_history.columns:  # Auf GLD geändert
         gold_start_dt = pd.to_datetime(gold_date_str)
         gold_mask = value_history.index >= gold_start_dt
         if gold_mask.any():
-            value_history.loc[gold_mask, "Portfolio-Wert"] += gold_ounces * price_history.loc[gold_mask, "XAU-USD"]
+            # Der historische GLD-Kurs wird mit 10.0 multipliziert, um den echten Unzen-Wert abzubilden
+            value_history.loc[gold_mask, "Portfolio-Wert"] += gold_ounces * (price_history.loc[gold_mask, "GLD"] * 10.0)
             value_history.loc[gold_mask, "Eingezahltes Kapital"] += gold_cost
             
     if "SI=F" in price_history.columns:
