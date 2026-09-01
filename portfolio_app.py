@@ -1473,13 +1473,13 @@ with st.spinner("Verarbeite Positionen..."):
     open_df, closed_df, unresolved_free_receipts = build_positions(tx, ticker_map)
 
 if open_df.empty:
-    tickers = ("XAU-USD", "SI=F")  # Auf den echten Spot-Gold-Ticker XAU-USD umgestellt
+    tickers = ("GC=F", "SI=F")  # Zurück auf das hochstabile GC=F
     last_update_time = pd.Timestamp.now().strftime("%d.%m.%Y %H:%M:%S")
-    current_prices = {"XAU-USD": 0.0, "SI=F": 0.0}
+    current_prices = {"GC=F": 0.0, "SI=F": 0.0}
 else:
     tickers_set = {t for t in ticker_map.values() if t}
-    tickers_set.add("XAU-USD")  # Spot-Gold anfragen
-    tickers_set.add("SI=F")  # Live-Silberpreis anfragen
+    tickers_set.add("GC=F")  # Live-Goldpreis mit anfragen
+    tickers_set.add("SI=F")  # Live-Silberpreis mit anfragen
     tickers = tuple(sorted(tickers_set))
     with st.spinner("Lade Live-Kurse..."):
         current_prices, last_update_time = fetch_current_prices(tickers)
@@ -1487,7 +1487,7 @@ else:
 # Typ der Ticker-Spalte auf Objekt setzen, um Pandas Assignment-Fehler bei leeren DataFrames zu verhindern
 open_df["Ticker"] = open_df["ISIN"].map(ticker_map).astype(object)
 
-open_df.loc[open_df["ISIN"] == "Physisches Gold", "Ticker"] = "XAU-USD"  # Auf Spot-Gold geändert
+open_df.loc[open_df["ISIN"] == "Physisches Gold", "Ticker"] = "GC=F"  # Zurück auf GC=F geändert
 open_df.loc[open_df["ISIN"] == "Physisches Silber", "Ticker"] = "SI=F"
 
 # ---------------------------------------------------------------------------
@@ -1509,9 +1509,9 @@ val_silver_ounces = float(silver_ounces_raw) if (silver_ounces_raw is not None a
 silver_cost = input_silver_cost
 silver_date_str = silver_date_str_input
 
-# Live-Rohstoffwerte in EUR bestimmen (sicher gegen temporäre Ladefehler auf XAU-USD abgesichert)
-val_gold_price = current_prices.get("XAU-USD")
-live_gold_price = float(val_gold_price) if (val_gold_price is not None and pd.notna(val_gold_price)) else 0.0
+# Live-Rohstoffwerte in EUR bestimmen (sicher über GC=F abzüglich der 1,56% Future-Prämie berechnet)
+val_gold_price = current_prices.get("GC=F")
+live_gold_price = (float(val_gold_price) * 0.9844) if (val_gold_price is not None and pd.notna(val_gold_price)) else 0.0
 total_gold_value = val_gold_ounces * live_gold_price
 
 val_silver_price = current_prices.get("SI=F")
@@ -1527,13 +1527,14 @@ open_df.loc[open_df["ISIN"] == "Andere Assets", "Aktueller Kurs"] = 1.0
 open_df.loc[open_df["ISIN"] == "Offene Kredite", "Aktueller Kurs"] = 1.0
 
 open_df.loc[open_df["ISIN"] == "Physisches Cash", "invested"] = total_cash
-open_df.loc[open_df["ISIN"] == "Physisches Cash", "avg_cost"] = 1.0
+open_df.loc[open_df["Physisches Cash", "avg_cost"] = 1.0
 
 open_df.loc[open_df["ISIN"] == "Andere Assets", "invested"] = total_other_assets
-open_df.loc[open_df["ISIN"] == "Andere Assets", "avg_cost"] = 1.0
+open_df.loc[open_df["Andere Assets", "avg_cost"] = 1.0
 
 open_df.loc[open_df["ISIN"] == "Offene Kredite", "invested"] = -total_loans
-open_df.loc[open_df["ISIN"] == "Offene Kredite", "avg_cost"] = 1.0
+open_df.loc[open_df["Offene Kredite", "avg_cost"] = 1.0
+
 # ---------------------------------------------------------------------------
 # KORREKTUR: DERIVATE FILTERN (Muss VOR der fillna(0.0)-Konvertierung passieren!)
 # ---------------------------------------------------------------------------
@@ -1604,12 +1605,12 @@ with st.spinner("Lade Kurshistorie..."):
 value_history = build_portfolio_value_history(tx, price_history, ticker_map)
 
 if not value_history.empty:
-    if "GLD" in price_history.columns:  # Auf GLD geändert
+    if "GC=F" in price_history.columns:  # Zurück auf GC=F geändert
         gold_start_dt = pd.to_datetime(gold_date_str)
         gold_mask = value_history.index >= gold_start_dt
         if gold_mask.any():
-            # Der historische GLD-Kurs wird mit 10.0 multipliziert, um den echten Unzen-Wert abzubilden
-            value_history.loc[gold_mask, "Portfolio-Wert"] += gold_ounces * (price_history.loc[gold_mask, "GLD"] * 10.0)
+            # Der historische GC=F-Kurs wird mit 0.9844 multipliziert, um den echten Spot-Wert abzubilden
+            value_history.loc[gold_mask, "Portfolio-Wert"] += gold_ounces * (price_history.loc[gold_mask, "GC=F"] * 0.9844)
             value_history.loc[gold_mask, "Eingezahltes Kapital"] += gold_cost
             
     if "SI=F" in price_history.columns:
