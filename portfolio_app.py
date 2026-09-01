@@ -1566,6 +1566,12 @@ if not expired_derivatives.empty:
 
 # WICHTIG: Erst JETZT wandeln wir verbleibende leere Kurse in 0.0 um, um Multiplikations-Abstürze zu verhindern!
 open_df["Aktueller Kurs"] = pd.to_numeric(open_df["Aktueller Kurs"], errors="coerce").fillna(0.0)
+
+# KORREKTUR: Diese drei Berechnungen wieder einfügen (wurden beim Umsortieren aus Versehen gelöscht!)
+open_df["Aktueller Wert"] = open_df["shares"] * open_df["Aktueller Kurs"]
+open_df["Gewinn/Verlust (€)"] = open_df["Aktueller Wert"] - open_df["invested"]
+open_df["Gewinn/Verlust (%)"] = open_df["Gewinn/Verlust (€)"] / open_df["invested"].replace(0, np.nan) * 100
+
 # ---------------------------------------------------------------------------
 # SORTIERUNG ABSTEIGEND
 # ---------------------------------------------------------------------------
