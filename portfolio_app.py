@@ -1473,13 +1473,13 @@ with st.spinner("Verarbeite Positionen..."):
     open_df, closed_df, unresolved_free_receipts = build_positions(tx, ticker_map)
 
 if open_df.empty:
-    tickers = ("GLD", "SI=F")  # Auf GLD (SPDR Gold Shares) geändert
+    tickers = ("XAU-USD", "SI=F")  # Auf den echten Spot-Gold-Ticker XAU-USD umgestellt
     last_update_time = pd.Timestamp.now().strftime("%d.%m.%Y %H:%M:%S")
-    current_prices = {"GLD": 0.0, "SI=F": 0.0}
+    current_prices = {"XAU-USD": 0.0, "SI=F": 0.0}
 else:
     tickers_set = {t for t in ticker_map.values() if t}
-    tickers_set.add("GLD")  # Live-Gold-ETF mit anfragen
-    tickers_set.add("SI=F")  # Live-Silberpreis mit anfragen
+    tickers_set.add("XAU-USD")  # Spot-Gold anfragen
+    tickers_set.add("SI=F")  # Live-Silberpreis anfragen
     tickers = tuple(sorted(tickers_set))
     with st.spinner("Lade Live-Kurse..."):
         current_prices, last_update_time = fetch_current_prices(tickers)
@@ -1487,7 +1487,7 @@ else:
 # Typ der Ticker-Spalte auf Objekt setzen, um Pandas Assignment-Fehler bei leeren DataFrames zu verhindern
 open_df["Ticker"] = open_df["ISIN"].map(ticker_map).astype(object)
 
-open_df.loc[open_df["ISIN"] == "Physisches Gold", "Ticker"] = "GLD"  # Auf GLD geändert
+open_df.loc[open_df["ISIN"] == "Physisches Gold", "Ticker"] = "XAU-USD"  # Auf Spot-Gold geändert
 open_df.loc[open_df["ISIN"] == "Physisches Silber", "Ticker"] = "SI=F"
 
 # ---------------------------------------------------------------------------
@@ -1509,9 +1509,9 @@ val_silver_ounces = float(silver_ounces_raw) if (silver_ounces_raw is not None a
 silver_cost = input_silver_cost
 silver_date_str = silver_date_str_input
 
-# Live-Rohstoffwerte in EUR bestimmen (sicher über GLD-ETF multipliziert mit 10.0 berechnet)
-val_gold_price = current_prices.get("GLD")
-live_gold_price = (float(val_gold_price) * 10.0) if (val_gold_price is not None and pd.notna(val_gold_price)) else 0.0
+# Live-Rohstoffwerte in EUR bestimmen (sicher gegen temporäre Ladefehler auf XAU-USD abgesichert)
+val_gold_price = current_prices.get("XAU-USD")
+live_gold_price = float(val_gold_price) if (val_gold_price is not None and pd.notna(val_gold_price)) else 0.0
 total_gold_value = val_gold_ounces * live_gold_price
 
 val_silver_price = current_prices.get("SI=F")
@@ -1534,11 +1534,8 @@ open_df.loc[open_df["ISIN"] == "Andere Assets", "avg_cost"] = 1.0
 
 open_df.loc[open_df["ISIN"] == "Offene Kredite", "invested"] = -total_loans
 open_df.loc[open_df["ISIN"] == "Offene Kredite", "avg_cost"] = 1.0
-
-# WICHTIG: Wandelt alle eventuellen None/NaN-Kurse in 0.0 um, um Multiplikations-Abstürze dauerhaft zu verhindern!
-open_df["Aktueller Kurs"] = pd.to_numeric(open_df["Aktueller Kurs"], errors="coerce").fillna(0.0)
 # ---------------------------------------------------------------------------
-# KORREKTUR: DERIVATE FILTERN
+# KORREKTUR: DERIVATE FILTERN (Muss VOR der fillna(0.0)-Konvertierung passieren!)
 # ---------------------------------------------------------------------------
 derivatives_mask = (
     (open_df["Name"].str.contains("Long|Short|Put|Call|Mini|Turbo|Faktor", case=False, na=False)) | 
@@ -1567,10 +1564,8 @@ if not expired_derivatives.empty:
         }
         closed_df = pd.concat([closed_df, pd.DataFrame([new_closed_row])], ignore_index=True)
 
-open_df["Aktueller Wert"] = open_df["shares"] * open_df["Aktueller Kurs"]
-open_df["Gewinn/Verlust (€)"] = open_df["Aktueller Wert"] - open_df["invested"]
-open_df["Gewinn/Verlust (%)"] = open_df["Gewinn/Verlust (€)"] / open_df["invested"].replace(0, np.nan) * 100
-
+# WICHTIG: Erst JETZT wandeln wir verbleibende leere Kurse in 0.0 um, um Multiplikations-Abstürze zu verhindern!
+open_df["Aktueller Kurs"] = pd.to_numeric(open_df["Aktueller Kurs"], errors="coerce").fillna(0.0)
 # ---------------------------------------------------------------------------
 # SORTIERUNG ABSTEIGEND
 # ---------------------------------------------------------------------------
